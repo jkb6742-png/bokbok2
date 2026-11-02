@@ -1,0 +1,35 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.row{display:grid;grid-template-columns:54px 1fr;column-gap:24px;padding:30px 40px 30px 34px;border-top:1px solid var(--line)}
+.row:first-child{border-top:none}
+.num{width:54px;height:54px;border-radius:50%;background:var(--fill);color:var(--on-fill);font-weight:700;font-size:23px;
+  display:flex;align-items:center;justify-content:center;margin-top:-7px;font-variant-numeric:tabular-nums;letter-spacing:0}
+.row h2{font-weight:700;line-height:1.45;letter-spacing:-0.025em}
+.row p{color:var(--sub);line-height:1.65;margin-top:8px;font-weight:450}
+body[data-deco=rich] .row:nth-child(odd){background:linear-gradient(90deg,var(--tint),rgba(255,255,255,0) 70%)}
+body[data-deco=rich] .row:first-child{border-radius:24px 24px 0 0}
+body[data-deco=rich] .row:last-child{border-radius:0 0 24px 24px}
+/* off: 번호 원 없이 글자 번호와 가는 선만 */
+body[data-deco=off] .row{grid-template-columns:44px 1fr;column-gap:16px;padding:30px 4px}
+body[data-deco=off] .num{width:auto;height:auto;background:none;color:var(--deep);font-size:21px;font-weight:700;
+  display:block;margin-top:3px}
+</style></head><body>
+<div id="app"></div>
+<script src="card.js"></script>
+<script>
+window.build = (app, d, o) => {
+  const { h, header, fitAttr, pad2 } = Card;
+  app.appendChild(header(d, o, 'points'));
+  const list = h('div', 'panel');
+  d.items.forEach((it, i) => {
+    const row = h('div', 'row');
+    row.appendChild(h('div', 'num', o.deco === 'off' ? pad2(i + 1) : i + 1));
+    const tx = h('div');
+    tx.appendChild(fitAttr(h('h2', null, it.head), 26, 21, 2));
+    if (it.body) tx.appendChild(fitAttr(h('p', null, it.body), 19, 16, 3));
+    row.appendChild(tx);
+    list.appendChild(row);
+  });
+  app.appendChild(list);
+};
+</script></body></html>

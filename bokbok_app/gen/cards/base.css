@@ -1,0 +1,40 @@
+/* 범용 블로그 카드 공통 스타일. 색은 render.js가 강조색 하나에서 만든 CSS 변수로 채운다. */
+:root{
+  --acc:#03C75A; --fill:#03C75A; --on-fill:#fff; --deep:#027A37; --soft:#E3F7EC; --tint:#F4FBF7;
+  --bg:#F7FAF8; --line:#DDE3E0; --ink:#1E2124; --sub:#585F66; --faint:#A1A7AD; --dark:#2A2F35;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:var(--bg)}
+body{
+  width:860px;background:var(--bg);color:var(--ink);
+  font-family:'Pretendard','Pretendard Variable','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+  word-break:keep-all;overflow-wrap:anywhere;line-break:strict;
+  padding:68px 56px 46px;position:relative;overflow:hidden;
+  -webkit-font-smoothing:antialiased;letter-spacing:-0.012em;
+}
+#app{position:relative;z-index:1}
+
+/* 머리말 */
+.hd{text-align:center;margin-bottom:40px;padding:0 20px}
+.hd .ic{width:68px;height:68px;border-radius:50%;background:var(--soft);color:var(--deep);
+  display:inline-flex;align-items:center;justify-content:center;margin-bottom:20px}
+.hd .ic svg{width:34px;height:34px}
+.hd h1{font-size:42px;font-weight:800;line-height:1.34;letter-spacing:-0.035em;color:var(--ink)}
+.hd .sub{font-size:20px;color:var(--sub);margin-top:12px;line-height:1.55;font-weight:500}
+.hd .bar{width:44px;height:4px;border-radius:2px;background:var(--acc);margin:24px auto 0}
+body[data-deco=off] .hd{margin-bottom:8px;padding:0}
+body[data-deco=off] .hd .bar{width:100%;height:2px;border-radius:0;background:var(--ink);margin-top:34px}
+
+/* 흰 판 */
+.panel{background:#fff;border:1px solid var(--line);border-radius:24px;overflow:visible}
+body[data-deco=off] .panel{background:transparent;border:none;border-radius:0;border-bottom:1px solid var(--line)}
+
+/* 꼬리말 */
+.ft{text-align:center;color:var(--faint);font-size:15px;margin-top:34px;letter-spacing:.06em;font-weight:600}
+body[data-deco=off] .ft{margin-top:26px}
+
+/* rich 배경 장식 */
+.blob{position:absolute;border-radius:50%;z-index:0;pointer-events:none}
+.blob.bl-a{width:300px;height:300px;right:-110px;top:-170px;background:var(--soft);opacity:.75}
+.blob.bl-b{width:160px;height:160px;left:-90px;top:-50px;border:2px solid var(--soft)}
+.blob.bl-c{width:14px;height:14px;right:214px;top:44px;background:var(--acc);opacity:.35}

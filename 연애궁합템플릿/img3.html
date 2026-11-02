@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.tb{background:#fff;border:2.5px solid var(--ink);border-radius:22px;overflow:hidden}
+.r{display:grid;grid-template-columns:112px repeat(4,1fr)}
+.r>div{padding:14px 10px;border-top:2px dashed var(--line);border-left:1.5px solid var(--line);text-align:center;font-size:16.5px;line-height:1.45;display:flex;align-items:center;justify-content:center}
+.r>div:first-child{border-left:0;background:var(--acc-soft);font-family:'Jua';font-size:19px;color:var(--deep)}
+.hd>div{border-top:0;background:var(--acc);color:#fff;flex-direction:column;padding:16px 6px 12px}
+.hd>div:first-child{background:var(--acc)}
+.hd b{font-family:'Jua';font-weight:400;font-size:30px;line-height:1}
+.hd small{font-size:14px;opacity:.9;margin-top:4px}
+.r.one>div:not(:first-child){font-family:'Gaegu';font-weight:700;font-size:21px;line-height:1.25}
+</style></head><body>
+<div id="app"></div>
+<script src="data.js"></script><script src="head.js"></script>
+<script>
+const v = D.compare;
+const head = `<div class="r hd"><div></div>${v.types.map(t => `<div><b>${t[0]}</b><small>${t[1]}</small></div>`).join('')}</div>`;
+const rows = v.rows.map((r, i) => `<div class="r${i === 0 ? ' one' : ''}"><div>${r}</div>${v.types.map(t => `<div>${t[2][i]}</div>`).join('')}</div>`).join('');
+document.getElementById('app').innerHTML = H(v.t, v.b, v.d) + `<div class="tb">${head}${rows}</div>` + FOOT;
+</script></body></html>

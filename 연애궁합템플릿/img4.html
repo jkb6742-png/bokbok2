@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.col{background:#fff;border:2.5px solid var(--ink);border-radius:20px;padding:22px 22px 18px}
+.col h3{font-family:'Jua';font-weight:400;font-size:27px;display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.col h3 i{font-style:normal;width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px}
+.good h3 i{background:#4FA37A}.bad h3 i{background:#D46A6A}
+.col li{list-style:none;font-size:20px;padding:11px 0;border-top:1.5px solid var(--line);line-height:1.35}
+.col li small{display:block;color:var(--sub);font-size:15px;margin-top:2px}
+.memo{margin-top:16px;display:flex;gap:16px;align-items:center;background:#F3EFFA;border:2px dashed #7C63B8;border-radius:18px;padding:16px 20px}
+.memo svg{flex:none;width:70px;height:70px}
+.memo b{font-family:'Jua';font-weight:400;font-size:20px;color:#7C63B8;display:block}
+.memo p{font-size:18px;line-height:1.5;margin-top:2px}
+</style></head><body>
+<div id="app"></div>
+<script src="data.js"></script><script src="head.js"></script><script src="comic.js"></script>
+<script>
+const n = D.near;
+const li = a => a.map(x => `<li>${x[0]}<small>${x[1]}</small></li>`).join('');
+document.getElementById('app').innerHTML = H(n.t, n.b, n.d) +
+  `<div class="cols"><div class="col good"><h3><i>○</i>${n.gh}</h3><ul>${li(n.good)}</ul></div><div class="col bad"><h3><i>×</i>${n.bh}</h3><ul>${li(n.bad)}</ul></div></div>` +
+  `<div class="memo"><svg viewBox="-46 -56 92 92">${C.person({x: 0, y: 0, body: '#7C63B8', hair: '#2F2A3A', hairStyle: 'messy', glasses: true, face: n.face || 'blank'})}</svg><div><b>INTP 메모</b><p>${n.memo}</p></div></div>` + FOOT;
+</script></body></html>

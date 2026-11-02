@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.list{display:flex;flex-direction:column;gap:12px}
+.it{display:grid;grid-template-columns:56px 1fr;gap:18px;align-items:center;background:#fff;border:2.5px solid var(--ink);border-radius:20px;padding:18px 24px}
+.it i{font-style:normal;width:56px;height:56px;border-radius:50%;background:var(--acc);color:#fff;font-family:'Jua';font-size:28px;display:flex;align-items:center;justify-content:center}
+.it b{display:block;font-family:'Jua';font-weight:400;font-size:26px;line-height:1.3}
+.it p{font-size:18px;color:var(--sub);margin-top:4px;line-height:1.5}
+.it .ex{display:inline-block;margin-top:8px;background:var(--acc-soft);border-radius:10px;padding:5px 12px;font-family:'Gaegu';font-weight:700;font-size:21px;color:var(--deep)}
+.types{display:flex;justify-content:center;gap:10px;margin:-8px 0 22px}
+.types span{border:2px solid var(--acc);color:var(--acc);border-radius:20px;padding:3px 16px;font-family:'Jua';font-size:20px;background:#fff}
+</style></head><body>
+<div id="app"></div>
+<script src="data.js"></script><script src="head.js"></script>
+<script>
+const m = D.common;
+document.getElementById('app').innerHTML = H(m.t, m.b, m.d) +
+  `<div class="types">${D.types.map(t => `<span>${t}</span>`).join('')}</div>` +
+  `<div class="list">${m.items.map((x, i) => `<div class="it"><i>${i + 1}</i><div><b>${x[0]}</b><p>${x[1]}</p>${x[2] ? `<span class="ex">${x[2]}</span>` : ''}</div></div>`).join('')}</div>` + FOOT;
+</script></body></html>

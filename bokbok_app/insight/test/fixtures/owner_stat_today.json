@@ -1,0 +1,5 @@
+{"_note":"반합성 fixture: 1번째 표(date·cv·cv_p, 15일)는 2026-11-01 실측 구조와 같고 값은 가짜. 2~4번째 표의 dataId·열 이름은 미확인 가정","statusCode":200,"message":"","result":{"statDataList":[
+{"dataId":"cv","data":{"columnInfo":["date","cv","cv_p"],"rows":{"date":["2026-10-30","2026-10-31","2026-11-01"],"cv":[40,55,12],"cv_p":[0.3,0.4,0.1]}},"utime":"2026-11-01 10:00:00"},
+{"dataId":"uv","data":{"columnInfo":["date","uv","uv_p"],"rows":{"date":["2026-10-30","2026-10-31","2026-11-01"],"uv":[30,41,9],"uv_p":[0.3,0.4,0.1]}},"utime":"2026-11-01 10:00:00"},
+{"dataId":"sq","data":{"columnInfo":["searchQuery","cv_p"],"rows":{"searchQuery":["infp 특징","nf유형"],"cv_p":[0.42,0.2]}},"utime":"2026-11-01 10:00:00"},
+{"dataId":"rf","data":{"columnInfo":["refererDomain","cv_p"],"rows":{"refererDomain":["네이버 통합검색_모바일","네이버 블로그"],"cv_p":[0.61,0.2]}},"utime":"2026-11-01 10:00:00"}]}}

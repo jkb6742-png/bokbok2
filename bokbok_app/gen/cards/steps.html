@@ -1,0 +1,40 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.st{display:grid;grid-template-columns:56px 1fr;column-gap:24px;position:relative;padding-bottom:18px}
+.st:last-child{padding-bottom:0}
+.rail{position:relative;display:flex;justify-content:center}
+.dot{width:56px;height:56px;border-radius:50%;background:var(--fill);color:var(--on-fill);font-weight:700;font-size:23px;
+  display:flex;align-items:center;justify-content:center;position:relative;z-index:1;margin-top:22px;letter-spacing:0}
+.st:not(:last-child) .rail::after{content:'';position:absolute;top:78px;bottom:-40px;left:50%;width:2px;margin-left:-1px;background:var(--soft)}
+.body{background:#fff;border:1px solid var(--line);border-radius:20px;padding:24px 32px 26px}
+.lab{font-size:14px;font-weight:700;color:var(--deep);letter-spacing:.12em}
+.body h2{font-weight:700;line-height:1.45;margin-top:6px;letter-spacing:-0.025em}
+.body p{color:var(--sub);line-height:1.65;margin-top:8px;font-weight:450}
+body[data-deco=rich] .st:not(:last-child) .rail::after{background:none;width:0;margin-left:-1px;border-left:2px dashed var(--acc);opacity:.5}
+body[data-deco=rich] .lab{display:inline-block;background:var(--soft);padding:4px 10px;border-radius:6px;letter-spacing:.1em}
+/* off: 원·선 장식 없이 단계 글자와 가는 구분선 */
+body[data-deco=off] .st{grid-template-columns:1fr;padding:0;border-top:1px solid var(--line)}
+body[data-deco=off] .st:first-child{border-top:none}
+body[data-deco=off] .rail{display:none}
+body[data-deco=off] .body{background:none;border:none;border-radius:0;padding:28px 4px}
+</style></head><body>
+<div id="app"></div>
+<script src="card.js"></script>
+<script>
+window.build = (app, d, o) => {
+  const { h, header, fitAttr } = Card;
+  app.appendChild(header(d, o, 'steps'));
+  const wrap = h('div', 'steps');
+  d.steps.forEach((s, i) => {
+    const st = h('div', 'st');
+    if (o.deco !== 'off') { const r = h('div', 'rail'); r.appendChild(h('div', 'dot', i + 1)); st.appendChild(r); }
+    const b = h('div', 'body');
+    b.appendChild(h('div', 'lab', 'STEP ' + (i + 1)));
+    b.appendChild(fitAttr(h('h2', null, s.head), 25, 20, 2));
+    if (s.body) b.appendChild(fitAttr(h('p', null, s.body), 19, 16, 3));
+    st.appendChild(b);
+    wrap.appendChild(st);
+  });
+  app.appendChild(wrap);
+};
+</script></body></html>

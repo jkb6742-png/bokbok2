@@ -1,0 +1,6 @@
+{"_note":"합성 fixture: 검색광고 API /keywordstool 응답 형식(키 없음으로 실측 못 함). 값은 가짜","keywordList":[
+{"relKeyword":"NF유형특징","monthlyPcQcCnt":320,"monthlyMobileQcCnt":2900,"monthlyAvePcClkCnt":1.2,"monthlyAveMobileClkCnt":10.5,"monthlyAvePcCtr":0.4,"monthlyAveMobileCtr":0.4,"plAvgDepth":3,"compIdx":"낮음"},
+{"relKeyword":"INFP특징","monthlyPcQcCnt":2400,"monthlyMobileQcCnt":18800,"monthlyAvePcClkCnt":5,"monthlyAveMobileClkCnt":40,"monthlyAvePcCtr":0.2,"monthlyAveMobileCtr":0.3,"plAvgDepth":5,"compIdx":"중간"},
+{"relKeyword":"ENFP연애","monthlyPcQcCnt":900,"monthlyMobileQcCnt":7600,"monthlyAvePcClkCnt":2,"monthlyAveMobileClkCnt":12,"monthlyAvePcCtr":0.2,"monthlyAveMobileCtr":0.2,"plAvgDepth":2,"compIdx":"낮음"},
+{"relKeyword":"강아지사료","monthlyPcQcCnt":5000,"monthlyMobileQcCnt":30000,"monthlyAvePcClkCnt":50,"monthlyAveMobileClkCnt":300,"monthlyAvePcCtr":1,"monthlyAveMobileCtr":1,"plAvgDepth":15,"compIdx":"높음"},
+{"relKeyword":"INFJ연예인","monthlyPcQcCnt":"< 10","monthlyMobileQcCnt":"< 10","monthlyAvePcClkCnt":0,"monthlyAveMobileClkCnt":0,"monthlyAvePcCtr":0,"monthlyAveMobileCtr":0,"plAvgDepth":0,"compIdx":"낮음"}]}

@@ -1,0 +1,55 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.cmp{display:grid;grid-template-columns:1fr 1fr;position:relative;border-radius:24px;overflow:hidden}
+.lb{padding:28px 34px 26px;text-align:center;font-weight:800;line-height:1.35;letter-spacing:-0.025em;
+  display:flex;align-items:center;justify-content:center}
+.lb.l{background:var(--fill);color:var(--on-fill)}
+.lb.r{background:var(--dark);color:#fff}
+.c{padding:22px 30px;text-align:center;line-height:1.6;font-weight:500;border-top:1px solid var(--line);color:var(--ink);
+  display:flex;align-items:center;justify-content:center}
+.c.l{border-right:1px solid var(--line)}
+.c.r1{border-top:none}
+.c.empty{color:var(--faint)}
+.vs{position:absolute;left:50%;top:0;width:50px;height:50px;margin-left:-25px;border-radius:50%;background:#fff;color:var(--ink);
+  font-weight:800;font-size:16px;letter-spacing:.04em;display:flex;align-items:center;justify-content:center;z-index:2}
+body[data-deco=rich] .c{gap:12px}
+body[data-deco=rich] .c i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--acc)}
+body[data-deco=rich] .c.r i{background:var(--dark)}
+body[data-deco=rich] .c.l{background:var(--tint)}
+/* off: 칠한 머리 없이 글자 + 선 */
+body[data-deco=off] .cmp{overflow:visible;border-radius:0}
+body[data-deco=off] .lb{padding:26px 20px 20px;border-bottom:1px solid var(--line)}
+body[data-deco=off] .lb.l{background:none;color:var(--deep);border-right:1px solid var(--line)}
+body[data-deco=off] .lb.r{background:none;color:var(--ink)}
+body[data-deco=off] .c{padding:22px 20px}
+</style></head><body>
+<div id="app"></div>
+<script src="card.js"></script>
+<script>
+window.build = (app, d, o) => {
+  const { h, header, fitAttr } = Card;
+  app.appendChild(header(d, o, 'compare'));
+  const panel = h('div', 'panel');
+  const g = h('div', 'cmp');
+  const L = fitAttr(h('div', 'lb l', d.left.label), 27, 21, 2); L.dataset.fitGroup = 'lb';
+  const R = fitAttr(h('div', 'lb r', d.right.label), 27, 21, 2); R.dataset.fitGroup = 'lb';
+  g.appendChild(L); g.appendChild(R);
+  const n = Math.max(d.left.items.length, d.right.items.length);
+  for (let i = 0; i < n; i++) {
+    for (const side of ['l', 'r']) {
+      const t = (side === 'l' ? d.left : d.right).items[i];
+      const c = h('div', 'c ' + side + (i === 0 ? ' r1' : '') + (t ? '' : ' empty'));
+      if (o.deco === 'rich' && t) c.appendChild(h('i'));
+      const s = fitAttr(h('span', null, t || '-'), 20, 16, 3); s.dataset.fitGroup = 'c';
+      c.appendChild(s);
+      g.appendChild(c);
+    }
+  }
+  panel.appendChild(g);
+  if (o.deco !== 'off') {
+    const vs = h('div', 'vs', 'VS'); g.appendChild(vs);
+    window.__afterFit = () => { vs.style.top = Math.round(L.offsetHeight / 2 - 25) + 'px'; };
+  }
+  app.appendChild(panel);
+};
+</script></body></html>

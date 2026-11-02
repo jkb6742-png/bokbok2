@@ -1,0 +1,28 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.row{display:grid;grid-template-columns:34px 1fr;column-gap:20px;align-items:start;padding:26px 40px 26px 36px;border-top:1px solid var(--line)}
+.row:first-child{border-top:none}
+.box{width:34px;height:34px;border-radius:9px;border:2px solid var(--acc);color:var(--deep);background:#fff;
+  display:flex;align-items:center;justify-content:center;margin-top:1px}
+.box svg{width:22px;height:22px}
+.row .t{font-weight:500;line-height:1.6;color:var(--ink)}
+body[data-deco=rich] .box{background:var(--fill);border-color:var(--fill);color:var(--on-fill)}
+body[data-deco=off] .row{grid-template-columns:1fr;padding:26px 4px}
+body[data-deco=off] .box{display:none}
+</style></head><body>
+<div id="app"></div>
+<script src="card.js"></script>
+<script>
+window.build = (app, d, o) => {
+  const { h, svg, header, fitAttr } = Card;
+  app.appendChild(header(d, o, 'checklist'));
+  const list = h('div', 'panel');
+  d.items.forEach((t) => {
+    const row = h('div', 'row');
+    if (o.deco !== 'off') { const b = h('div', 'box'); b.appendChild(svg('check')); row.appendChild(b); }
+    row.appendChild(fitAttr(h('div', 't', t), 22, 17, 3));
+    list.appendChild(row);
+  });
+  app.appendChild(list);
+};
+</script></body></html>
