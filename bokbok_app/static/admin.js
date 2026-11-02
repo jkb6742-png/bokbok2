@@ -78,6 +78,11 @@
                   (u.role === 'admin' ? '' : '<div class="row" style="margin-top:8px"><button type="button" class="btn sm pri" data-act="savePerms" data-u="' + esc(u.email) + '">권한 저장</button></div>') + '</div>' +
                 '</div></td></tr>' : '');
           }).join('') + '</tbody></table></div>' +
+          '<div class="panel"><div class="panel-h"><h2>블로그 계정 소유자</h2><span class="sub">각 사용자는 자기 소유의 블로그 계정만 봅니다. 여기서 소유자를 바꾸면 그 사람의 목록으로 옮겨집니다.</span></div>' +
+            (D.accounts && D.accounts.length ? '<table class="tbl"><thead><tr><th>이름</th><th>블로그 아이디</th><th>소유자</th></tr></thead><tbody>' +
+              D.accounts.map(function (a) { return '<tr><td><b>' + esc(a.name) + '</b></td><td class="mono">' + esc(a.blogId) + '</td><td><select class="inp" data-owner="' + esc(a.blogId) + '" style="max-width:260px">' +
+                (a.owner && !D.users.some(function (u) { return u.email === a.owner; }) ? '<option value="' + esc(a.owner) + '" selected>' + esc(a.owner) + ' (없는 가입자)</option>' : '') +
+                D.users.map(function (u) { return '<option value="' + esc(u.email) + '"' + (u.email === a.owner ? ' selected' : '') + '>' + esc(u.name) + ' (' + esc(u.email) + ')' + (u.role === 'admin' ? ' · 관리자' : '') + '</option>'; }).join('') + '</select></td></tr>'; }).join('') + '</tbody></table>' : '<div class="muted">등록된 블로그 계정이 없습니다.</div>') + '</div>' +
           '<div class="panel"><div class="panel-h"><h2>가입 방식</h2></div><div class="form stack">' +
             '<div class="field"><label>새로 가입하는 사람</label><select class="inp" data-r="signupMode" style="max-width:260px">' + SIGNUP.map(function (o) { return '<option value="' + o[0] + '"' + (S.signupMode === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' +
               '<div class="hint" data-r="signupHint">' + esc((SIGNUP.find(function (o) { return o[0] === S.signupMode; }) || SIGNUP[1])[2]) + '</div></div>' +
@@ -87,7 +92,9 @@
           '</div></div>';
       }
       function load() {
-        return BB.api('/api/admin/users').then(function (r) { if (!alive) return; D = r; paint(); }).catch(function () { if (alive) body.innerHTML = '<div class="empty bad">가입자 목록을 불러오지 못했습니다.</div>'; });
+        return Promise.all([BB.api('/api/admin/users'), BB.api('/api/admin/accounts').catch(function () { return { accounts: [], users: [] }; })])
+          .then(function (rs) { if (!alive) return; D = rs[0]; D.accounts = rs[1].accounts || []; paint(); })
+          .catch(function () { if (alive) body.innerHTML = '<div class="empty bad">가입자 목록을 불러오지 못했습니다.</div>'; });
       }
       function readPerms(prefix) {
         var out = {};
@@ -104,6 +111,11 @@
 
       body.addEventListener('change', function (e) {
         var t = e.target;
+        if (t.getAttribute('data-owner')) {
+          var bid = t.getAttribute('data-owner'), v = t.value;
+          post('/api/admin/accounts/owner', { blogId: bid, owner: v }).then(function () { var a = D.accounts.find(function (x) { return x.blogId === bid; }); if (a) a.owner = v; BB.toast('[' + bid + '] 소유자를 ' + v + ' 로 바꿨습니다'); }).catch(function (err) { BB.toast(err.message); paint(); });
+          return;
+        }
         if (t.getAttribute('data-r') === 'signupMode') {
           var v = t.value;
           post('/api/admin/settings', { signupMode: v }).then(function (r) { D.settings = r.settings; var h = body.querySelector('[data-r="signupHint"]'); if (h) h.textContent = (SIGNUP.find(function (o) { return o[0] === v; }) || SIGNUP[1])[2]; BB.toast('가입 방식을 저장했습니다'); }).catch(function (err) { BB.toast(err.message); paint(); });

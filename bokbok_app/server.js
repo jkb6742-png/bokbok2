@@ -104,6 +104,22 @@ const DEFAULT_SETTINGS = {
 const settings = () => ({ ...DEFAULT_SETTINGS, ...read('settings', {}) });
 let accounts = read('accounts', null);
 if (!accounts) { accounts = [{ name: '복복이의 이것저것', blogId: 'jsrjkb6742' }]; write('accounts', accounts); }
+// 블로그 계정 소유자(owner = 앱 로그인 아이디): 각자 자기 블로그 계정만 본다. 소유자가 없는 예전 계정은 첫 관리자 것으로.
+//   관리자는 사용자 관리 화면에서 소유자를 바꿀 수 있다(/api/admin/accounts). 큐(internal)는 전부 본다.
+function ensureOwners() {
+  if (!accounts.some(a => !a.owner)) return;
+  let adminEmail = '';
+  try { const u = users().find(x => x.role === 'admin'); adminEmail = u ? u.email : ''; } catch { }
+  if (!adminEmail) return;
+  for (const a of accounts) if (!a.owner) a.owner = adminEmail;
+  write('accounts', accounts);
+}
+const visibleAccounts = me => (!me || me.internal) ? accounts : accounts.filter(a => !a.owner || a.owner === me.user.email);
+function checkOwner(me, blogId, P) {
+  if (!me || me.internal || !blogId || P.startsWith('/api/admin/')) return;
+  const a = accounts.find(x => x.blogId === String(blogId));
+  if (a && a.owner && a.owner !== me.user.email) throw new HttpErr(403, '다른 사용자의 블로그 계정입니다. 관리자가 사용자 관리에서 소유자를 바꿀 수 있습니다');
+}
 fs.mkdirSync(path.join(PROJECT, '원고함'), { recursive: true });
 
 // ── 원고 찾기: 직접 등록한 파일 + 자동 찾기 폴더(*_layout.js, *.txt) ──
@@ -1155,7 +1171,7 @@ http.createServer(async (req, res) => {
     const internal = req.headers['x-bokbok-internal'] === INTERNAL_TOKEN && /^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(req.socket.remoteAddress || '');
     const me = internal ? { user: { name: 'queue', email: 'queue@local', createdAt: 0, prefs: {} }, internal: true } : auth(req);
     if (!OPEN_API.has(P) && !me) return send(res, 401, { error: '로그인이 필요합니다' });
-    if (req.method === 'GET') checkPerm(me, P, 'GET', u, null);
+    if (req.method === 'GET') { checkPerm(me, P, 'GET', u, null); ensureOwners(); checkOwner(me, u.searchParams.get('blogId'), P); }
 
     // 실시간 로그
     if (P === '/api/events') {
@@ -1168,6 +1184,10 @@ http.createServer(async (req, res) => {
     if (req.method === 'GET') {
       if (P === '/api/auth/me') return me ? send(res, 200, { user: pubUser(me.user) }) : send(res, 401, { error: '로그인이 필요합니다' });
       if (P === '/api/app') return send(res, 200, { version: VERSION, dataDir: DATA, port: PORT, project: PROJECT });
+      if (P === '/api/admin/accounts') {
+        adminOnly(me);
+        return send(res, 200, { accounts: accounts.map(a => ({ name: a.name || a.blogId, blogId: a.blogId, owner: a.owner || '' })), users: users().map(x => ({ email: x.email, name: x.name, role: roleOf(x) })) });
+      }
       if (P === '/api/admin/users') {
         adminOnly(me);
         const sess = sessions();
@@ -1178,7 +1198,8 @@ http.createServer(async (req, res) => {
       if (P === '/api/net/job') return send(res, 200, { job: netJob });
       if (P === '/api/queue') return send(res, 200, { items: Q.items.map(x => Q.pub(x)), summary: Q.summary(), state: Q.state });
       if (P === '/api/state') {
-        const blogId = u.searchParams.get('blogId') || accounts[0]?.blogId;
+        const mine = visibleAccounts(me);
+        const blogId = u.searchParams.get('blogId') || mine[0]?.blogId;
         const titles = blogId ? await blogTitles(blogId) : [];
         const hist = read('history', []);
         const ms = manuscriptFiles(blogId).map(m => {
@@ -1188,7 +1209,7 @@ http.createServer(async (req, res) => {
           if (m.draft) { const dj = readJson(path.join(path.dirname(m.path), 'draft.json')); if (dj) { reviewed = dj.reviewed || null; auto = !!(dj.input && dj.input.auto); } }
           return { ...s, registered: m.registered, draft: m.draft, posted: !!(s.ok && titles.includes(s.title)), last, reviewed, auto };
         });
-        return send(res, 200, { accounts, settings: settings(), manuscripts: ms, job: job && { blogId: job.blogId, file: job.file, mode: job.mode, progress: job.progress, done: job.done, result: job.result, lines: job.lines.slice(-200) } });
+        return send(res, 200, { accounts: mine, settings: settings(), manuscripts: ms, job: job && { blogId: job.blogId, file: job.file, mode: job.mode, progress: job.progress, done: job.done, result: job.result, lines: job.lines.slice(-200) } });
       }
       if (P === '/api/topics') {
         // 주제 조회: 이 계정의 발행 데이터로 "지금 이 주제를 써도 되나" 판정 + 축별 상태 (외부·AI 호출 없음)
@@ -1306,6 +1327,7 @@ http.createServer(async (req, res) => {
     if (req.method !== 'POST') return send(res, 404, { error: '없는 경로입니다' });
     const b = await body(req);
     checkPerm(me, P, 'POST', u, b);
+    ensureOwners(); checkOwner(me, b && b.blogId, P);
 
     // ── 인증 ──
     if (P === '/api/auth/signup') {
@@ -1327,7 +1349,7 @@ http.createServer(async (req, res) => {
       return send(res, 200, { user: pubUser(nu) });
     }
     // ── 관리자: 가입자 관리 ──
-    if (P.startsWith('/api/admin/')) {
+    if (P.startsWith('/api/admin/users')) {
       adminOnly(me);
       const list = users(), email = normEmail(b.email), target = list.find(x => x.email === email);
       const admins = () => list.filter(x => roleOf(x) === 'admin');
@@ -1381,6 +1403,15 @@ http.createServer(async (req, res) => {
         return send(res, 200, { ok: true });
       }
       throw new HttpErr(404, '없는 관리자 기능입니다');
+    }
+    if (P === '/api/admin/accounts/owner') {
+      adminOnly(me);
+      const a = accounts.find(x => x.blogId === String(b.blogId || ''));
+      if (!a) throw new HttpErr(404, '등록된 블로그 계정이 아닙니다');
+      const owner = normEmail(b.owner);
+      if (!users().some(x => x.email === owner)) throw new Error('그 아이디의 가입자가 없습니다');
+      a.owner = owner; write('accounts', accounts);
+      return send(res, 200, { ok: true, blogId: a.blogId, owner });
     }
     if (P === '/api/admin/settings') {
       adminOnly(me);
@@ -1906,7 +1937,7 @@ http.createServer(async (req, res) => {
     if (P === '/api/accounts') {
       if (!/^[a-zA-Z0-9_-]{3,40}$/.test(b.blogId || '')) throw new Error('블로그 아이디 형식이 아님');
       let a = accounts.find(x => x.blogId === b.blogId);
-      if (!a) { a = { name: b.name || b.blogId, blogId: b.blogId }; accounts.push(a); }
+      if (!a) { a = { name: b.name || b.blogId, blogId: b.blogId, owner: me.internal ? '' : me.user.email }; accounts.push(a); }
       write('accounts', accounts);
       // 새 계정은 기본 글 형태 템플릿 3개를 바로 갖는다(데이터가 쌓이면 [기본 3개 다시 구성]으로 갱신)
       if (!Array.isArray(a.presets) || !a.presets.length) { try { applyDefaultPresets(a, suggestPresets(a.blogId)); } catch (e) { console.error('기본 템플릿 구성 실패', a.blogId, e.message); } }
