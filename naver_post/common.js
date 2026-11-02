@@ -14,7 +14,9 @@ const puppeteer = chromeEnv.puppeteer;
 const BLOG_ID = process.env.BLOG_ID || 'jsrjkb6742';
 const CHROME = chromeEnv.CHROME;
 const LOCAL = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-const PROFILE = BLOG_ID === 'jsrjkb6742' ? path.join(LOCAL, 'naver-blog-profile') : path.join(LOCAL, 'bokbok', 'profiles', BLOG_ID);
+// 전용 크롬 프로필: 기본은 블로그 아이디 이름. 네이버 로그인 아이디와 블로그 아이디가 다르면(예: 로그인 jkb2907, 블로그 victoreconomic)
+// 앱이 BLOG_PROFILE(계정의 loginId 프로필 경로)을 넘겨 그 폴더를 쓴다.
+const PROFILE = process.env.BLOG_PROFILE || (BLOG_ID === 'jsrjkb6742' ? path.join(LOCAL, 'naver-blog-profile') : path.join(LOCAL, 'bokbok', 'profiles', BLOG_ID));
 const WRITE_URL = `https://blog.naver.com/${BLOG_ID}?Redirect=Write&`;
 const ALLOWED = /^https?:\/\/([a-z0-9-]+\.)*(naver\.com|naver\.net|pstatic\.net|navercorp\.com)(\/|$)/;
 

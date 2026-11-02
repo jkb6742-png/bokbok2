@@ -299,11 +299,18 @@ function internalPost(pathname, body) {
   });
 }
 
+// 전용 크롬 프로필 폴더: 계정에 loginId(네이버 로그인 아이디)가 따로 있으면 그 이름, 아니면 블로그 아이디 (naver_post/common.js 와 같은 규칙)
+function profileDirOf(blogId) {
+  const a = accounts.find(x => x.blogId === blogId) || {};
+  const id = a.loginId || blogId;
+  const LOCAL = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  return id === 'jsrjkb6742' ? path.join(LOCAL, 'naver-blog-profile') : path.join(LOCAL, 'bokbok', 'profiles', id);
+}
 function run(blogId, mf, mode, { direct = false } = {}) {
   if (job && !job.done) throw new Error('이미 실행 중');
   const st = settings();
   if (direct) { const acc = accounts.find(a => a.blogId === blogId) || {}; Q.track({ lane: 'publish', kind: 'publish', blogId, label: `${acc.name || blogId} · ${path.basename(String(mf || ''))}`, payload: { blogId, file: mf, mode } }); }
-  const env = { ...process.env, BLOG_ID: blogId, TPM: String(st.tpm), JITTER: String(st.jitter), LINE_PAUSE: String(st.linePause), TAG_PAUSE: String(st.tagPause), REPORT_DIR: path.join(DATA, 'reports'),
+  const env = { ...process.env, BLOG_ID: blogId, BLOG_PROFILE: profileDirOf(blogId), TPM: String(st.tpm), JITTER: String(st.jitter), LINE_PAUSE: String(st.linePause), TAG_PAUSE: String(st.tagPause), REPORT_DIR: path.join(DATA, 'reports'),
     TYPO_N: String(st.typoN ?? 0), THINK_N: String(st.thinkN ?? 0), READ_N: String(st.readN ?? 0), READ_SEC: String(st.readSec ?? 60), CLEAR_CACHE: st.clearCache === false ? '0' : '1', LOGIN_MODE: st.loginMode === 'keep' ? 'keep' : 'fresh' };
   delete env.FAST; delete env.PUBLISH;
   if (mode === 'test') env.FAST = '1';
@@ -369,7 +376,7 @@ async function neighborScan(myId, items) {
 }
 function neighborOpen(it) {
   return new Promise(resolve => {
-    execFile(process.execPath, [path.join(TOOL, 'neighbor.js'), it.blogId], { cwd: TOOL, env: { ...process.env, BLOG_ID: it.myId }, timeout: 90000, encoding: 'utf8' }, (e, out, err) => {
+    execFile(process.execPath, [path.join(TOOL, 'neighbor.js'), it.blogId], { cwd: TOOL, env: { ...process.env, BLOG_ID: it.myId, BLOG_PROFILE: profileDirOf(it.myId) }, timeout: 90000, encoding: 'utf8' }, (e, out, err) => {
       const line = String(out || '').split(/\r?\n/).find(l => l.startsWith('@@결과 '));
       let r = null; try { r = line ? JSON.parse(line.slice(5)) : null; } catch { }
       resolve(r || { target: it.blogId, where: 'error', error: (e && e.message) || String(err || '').trim() || '열지 못함' });
@@ -642,7 +649,7 @@ function accountHidden(a) {
 function fetchHidden(blogId, url) {
   return new Promise((resolve, reject) => {
     const out = refDir(blogId, 'hidden'); fs.mkdirSync(out, { recursive: true });
-    const env = { ...process.env, BLOG_ID: blogId, URL: url, OUT: out, LOGIN_MODE: 'keep' };
+    const env = { ...process.env, BLOG_ID: blogId, BLOG_PROFILE: profileDirOf(blogId), URL: url, OUT: out, LOGIN_MODE: 'keep' };
     const proc = spawn(process.execPath, [path.join(TOOL, 'hidden.js')], { cwd: TOOL, env });
     const items = [], lines = []; let err = '', buf = '';
     const onLine = l => {
@@ -1793,6 +1800,8 @@ http.createServer(async (req, res) => {
         quoteStyle: styleKey('quote', b.quoteStyle === undefined ? a.quoteStyle : b.quoteStyle),   // 이름(세로선)·키(quotation_line) 둘 다 받아 키로 저장
         lineStyle: styleKey('line', b.lineStyle === undefined ? a.lineStyle : b.lineStyle),
       });
+      // 네이버 로그인 아이디가 블로그 아이디와 다를 때(블로그 아이디를 따로 만든 계정): 전용 크롬 프로필은 로그인 아이디 폴더를 쓴다
+      if (b.loginId !== undefined) { const lid = String(b.loginId || '').trim(); if (lid && !/^[a-zA-Z0-9_-]{2,40}$/.test(lid)) throw new Error('네이버 로그인 아이디 형식이 아닙니다'); a.loginId = lid; }
       write('accounts', accounts);
       return send(res, 200, { account: a });
     }
@@ -1949,7 +1958,7 @@ http.createServer(async (req, res) => {
         if (!accounts.some(a => a.blogId === b.blogId)) throw new Error('등록된 블로그를 선택하세요');
         const loginId = String(b.loginId || '').trim();
         if (!/^[a-zA-Z0-9_-]{2,40}$/.test(loginId) || typeof b.password !== 'string' || !b.password || b.password.length > 200) throw new Error('네이버 아이디와 비밀번호를 확인하세요');
-        const child = spawn(process.execPath, [path.join(TOOL, 'login.js'), '--fill-once'], { cwd: TOOL, env: { ...process.env, BLOG_ID: b.blogId, LOGIN_MODE: 'fresh' }, detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+        const child = spawn(process.execPath, [path.join(TOOL, 'login.js'), '--fill-once'], { cwd: TOOL, env: { ...process.env, BLOG_ID: b.blogId, BLOG_PROFILE: profileDirOf(b.blogId), LOGIN_MODE: 'fresh' }, detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
         const ready = new Promise((resolve, reject) => {
           const timer = setTimeout(() => { if (child.connected) child.disconnect(); reject(new Error('로그인 창 준비 시간이 초과되었습니다')); }, 60000);
           const fail = () => { clearTimeout(timer); reject(new Error('로그인 창 준비에 실패했습니다')); };
@@ -1963,7 +1972,7 @@ http.createServer(async (req, res) => {
         await ready;
         return send(res, 200, { ok: true, filled: true });
       }
-      spawn(process.execPath, [path.join(TOOL, 'login.js')], { cwd: TOOL, env: { ...process.env, BLOG_ID: b.blogId }, detached: true, stdio: 'ignore' }).unref();
+      spawn(process.execPath, [path.join(TOOL, 'login.js')], { cwd: TOOL, env: { ...process.env, BLOG_ID: b.blogId, BLOG_PROFILE: profileDirOf(b.blogId) }, detached: true, stdio: 'ignore' }).unref();
       return send(res, 200, { ok: true });
     }
     if (P === '/api/pick') {
