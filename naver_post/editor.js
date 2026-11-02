@@ -257,16 +257,22 @@ class Editor {
     const target = await this.f.evaluateHandle(() => { const og = [...document.querySelectorAll('.se-content .se-component.se-oglink')].pop(); const prev = og && og.previousElementSibling; const ps = prev ? prev.querySelectorAll('.se-text-paragraph') : []; return ps[ps.length - 1] || null; });
     const el = target.asElement();
     if (el) {
-      const had = await el.evaluate(x => (x.innerText || '').trim());
-      if (had.includes(url)) {
+      const had = await el.evaluate(x => (x.innerText || '').replace(/​/g, '').trim());
+      if (had.includes(url.slice(0, 20))) {
+        // Shift+Home 선택은 줄이 길면 화면 줄 단위로만 잡혀 주소가 남는다(2026-11-02 하얀드림 실패) → 글자 수만큼 Backspace로 확실히 지운다
         await el.evaluate(x => x.scrollIntoView({ block: 'center' })); await pause(200);
-        await el.click(); await this.key('End');
-        try { await this.page.keyboard.down('Shift'); await this.page.keyboard.press('Home'); } finally { await this.page.keyboard.up('Shift'); }
-        await this.key('Backspace'); await pause(300);
-        const left = await el.evaluate(x => (x.innerText || '').replace(/​/g, '').trim()).catch(() => '');
-        if (!left) { await this.key('Backspace'); await pause(300); }   // 빈 줄을 앞 줄에 합친다
-        const after = await this.f.evaluate(() => { const og = [...document.querySelectorAll('.se-content .se-component.se-oglink')].pop(); const prev = og && og.previousElementSibling; return prev ? (prev.innerText || '').replace(/\s+/g, ' ').trim().slice(-40) : ''; });
-        console.log(`  주소 줄 정리 → 카드 앞 본문 끝: "${after}"`);
+        await el.click(); await this.key('End'); await pause(150);
+        const clean = async () => el.evaluate(x => (x.innerText || '').replace(/​/g, '').trim()).catch(() => '');
+        let left = await clean(), guard = 0;
+        while (left && guard++ < 6) {
+          for (let i = 0; i < [...left].length; i++) await this.page.keyboard.press('Backspace');
+          await pause(300); left = await clean();
+        }
+        if (left) throw new Error(`주소 줄을 지우지 못했습니다: "${left.slice(0, 40)}"`);
+        await this.key('Backspace'); await pause(300);   // 빈 줄을 앞 줄에 합친다
+        const after = await this.f.evaluate(() => { const og = [...document.querySelectorAll('.se-content .se-component.se-oglink')].pop(); const prev = og && og.previousElementSibling; const ps = prev ? [...prev.querySelectorAll('.se-text-paragraph')] : []; return { n: ps.length, tail: (prev && prev.innerText || '').replace(/\s+/g, ' ').trim().slice(-40) }; });
+        if (/https?:\/\//.test(after.tail)) throw new Error(`주소 글자가 본문에 남았습니다: "${after.tail}"`);
+        console.log(`  주소 줄 정리 → 카드 앞 본문 ${after.n}줄, 끝: "${after.tail}"`);
       }
     }
     void prevPs;
