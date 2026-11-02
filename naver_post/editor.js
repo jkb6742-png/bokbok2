@@ -235,7 +235,11 @@ class Editor {
       inp = await this.f.waitForSelector('.se-popup-oglink-input, .se-popup-oglink input[type="text"]', { visible: true, timeout: 5000 }).catch(() => null);
       if (!inp) console.log(`  링크 팝업 없음 (${t + 1}/2)`);
     }
-    if (!inp) { console.log('  링크 팝업 대신 주소 입력 → 자동 카드 변환'); return this.linkByTyping(url); }
+    if (!inp) {
+      // 뒤늦게 열린 링크 팝업(dim 포함)이 편집기를 덮으면 타이핑·Backspace가 먹지 않는다 → 먼저 닫는다 (2026-11-02 하얀드림)
+      await this.closePopups();
+      console.log('  링크 팝업 대신 주소 입력 → 자동 카드 변환'); return this.linkByTyping(url);
+    }
     await inp.click(); await human(this.page, url);
     await this.key('Enter'); await pause(3500);
     await this.click('.se-popup-button-confirm'); await pause(2000);
@@ -243,6 +247,7 @@ class Editor {
   // 주소를 치고 Enter → 편집기가 그 자리를 나눠 링크 카드를 넣는다(주소 글자는 앞 본문 끝 줄에 남는다 → 그 줄만 지운다)
   async linkByTyping(url) {
     const ogN = () => this.f.$$eval('.se-content .se-component.se-oglink', a => a.length);
+    await this.closePopups();
     await this.lastLine();
     await this.key('Enter'); await pause(300);          // 같은 본문 칸 안의 새 빈 줄
     const n0 = await ogN();
@@ -279,6 +284,22 @@ class Editor {
     await pause(800);
   }
 
+  // 열려 있는 팝업(링크·사진 등 .se-popup)을 닫기/취소 단추로 닫고, 그래도 남으면 Escape
+  async closePopups() {
+    for (let t = 0; t < 3; t++) {
+      const open = await this.f.$$('.se-popup:not([style*="display: none"]), .se-popup-oglink');
+      if (!open.length) return;
+      for (const p of open) {
+        const b = await p.$('.se-popup-button-cancel, .se-popup-close-button, button[class*="close"]');
+        if (b) await b.click().catch(() => { });
+      }
+      await pause(400);
+      await this.page.keyboard.press('Escape').catch(() => { });
+      await pause(300);
+    }
+    const left = await this.f.$$('.se-popup-oglink');
+    if (left.length) console.log('  팝업이 아직 남아 있음(.se-popup-oglink)');
+  }
   // 글감 검색바·라이브러리 패널이 클릭을 가로막지 않게 닫기
   async tidy() {
     for (const s of ['.se-popup-button-cancel', '.se-help-panel-close-button', '.se-sidebar-close-button', '.se-flayer-unified-fold-button']) {
