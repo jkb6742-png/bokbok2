@@ -6,8 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const { renderCards, validateCard, makePalette, contrast, parseHex } = require('../render.js');
 
-const OUT = process.env.CARDS_OUT ||
-  'C:/Users/jjang/AppData/Local/Temp/claude/C--Users-jjang/edf36eba-1de1-4765-8d49-b970c08ec1b6/scratchpad/cards_out';
+const os = require('os');
+const OUT = process.env.CARDS_OUT || path.join(os.tmpdir(), 'bokbok-cards-test');   // PC마다 다른 임시 폴더
 
 const SAMPLE = {
   points: {
