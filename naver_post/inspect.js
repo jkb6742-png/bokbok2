@@ -9,6 +9,8 @@ const boldOf = l => /^h/.test(headOf(l)) ? plain(l) : [...body(l).matchAll(/\*\*
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 async function inspect(f, S) {
+  // 본문 바로 뒤 [해시태그]는 편집기에서 같은 본문 칸에 이어 붙으므로(write.js: End→Enter) 그 칸의 마지막 줄(크기 15)로 대조한다
+  S = { ...S, blocks: S.blocks.reduce((a, b) => { const p = a[a.length - 1]; if (b.hashtags && p && p.text) a[a.length - 1] = { text: [...p.text, '#s ' + S.tags.map(t => '#' + t).join(' ')] }; else a.push(b); return a; }, []) };
   const doc = await f.evaluate(() => {
     const clean = s => s.replace(/\u200b/g, '').replace(/\u00a0/g, ' ').trim();
     const comps = [...document.querySelectorAll('.se-content .se-component')].map(c => {

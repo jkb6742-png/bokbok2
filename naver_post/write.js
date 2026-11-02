@@ -55,7 +55,7 @@ let browserRef = null;   // 오류로 멈출 때 창은 남기되 프로세스�
     else if (b.text || b.hashtags) {
       if (prev === 'quote') await e.afterQuote();
       else if (prev === 'img' || prev === 'title') await e.lastLine();
-      else if (b.hashtags && prev === 'text') await e.newLine();   // 본문 바로 뒤 해시태그는 새 본문 칸에 (앞 줄에 붙지 않게)
+      else if (b.hashtags && prev === 'text') { await e.key('End'); await e.key('Enter'); }   // 본문 바로 뒤 해시태그는 같은 칸의 새 줄에 (줄 중간에 끼지 않게)
       if (b.hashtags) await e.text([S.tags.map(t => '#' + t).join(' ')], { size: 'fs15' });
       else await e.text(b.text);
     }
