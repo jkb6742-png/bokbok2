@@ -36,6 +36,22 @@ function mascot(mood = 'normal', size = 220) {
 </svg>`;
 }
 
+// 상대역 캐릭터(정장·넥타이, 빅터와 다른 머리). mood: normal | worry | shout | happy
+function other(mood = 'normal', size = 200, color = '#334155') {
+  const mouth = mood === 'shout' ? '<ellipse cx="110" cy="122" rx="12" ry="9" fill="#1F2937"/>' : mood === 'worry' ? '<path d="M96 124 q14 -8 28 0" stroke="#1F2937" stroke-width="3" fill="none" stroke-linecap="round"/>' : mood === 'happy' ? '<path d="M94 118 q16 12 32 0" stroke="#1F2937" stroke-width="3" fill="none" stroke-linecap="round"/>' : '<path d="M96 120 h28" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>';
+  const brow = mood === 'worry' ? '<path d="M72 88 l18 6 M130 94 l18 -6" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>' : mood === 'shout' ? '<path d="M72 92 l18 -6 M130 86 l18 6" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>' : '<path d="M72 88 l18 0 M130 88 l18 0" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>';
+  const sweat = mood === 'worry' ? '<path d="M160 96 q8 12 0 18 q-8 -6 0 -18z" fill="#7DD3FC"/>' : '';
+  return `<svg viewBox="0 0 240 240" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+  <ellipse cx="110" cy="226" rx="78" ry="10" fill="#0F1E3A" opacity=".08"/>
+  <path d="M46 236 q0 -70 64 -70 q64 0 64 70 z" fill="${color}"/>
+  <path d="M98 168 l12 14 l12 -14 z" fill="#fff"/><path d="M106 180 l4 40 l4 -40 z" fill="#E5484D"/>
+  <path d="M62 102 q0 -56 48 -56 q48 0 48 56 v30 q0 40 -48 40 q-48 0 -48 -40 z" fill="#F3D3B8"/>
+  <path d="M62 98 q6 -50 48 -50 q42 0 48 50 q-6 -14 -48 -16 q-42 2 -48 16 z" fill="#6B7280"/>
+  <circle cx="88" cy="108" r="4" fill="#1F2937"/><circle cx="132" cy="108" r="4" fill="#1F2937"/>
+  ${brow}${mouth}${sweat}
+</svg>`;
+}
+
 const CSS = `
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
 :root{--navy:#0F1E3A;--green:#19C37D;--green-soft:#E6F8EF;--ink:#1a1d21;--sub:#6B7280;--line:#E5E7EB;--bg:#F6F8FB;--card:#fff;--warn:#F59E0B;--warn-soft:#FFF4D6;--red:#E5484D;--red-soft:#FDE7E8}
@@ -172,6 +188,29 @@ const T = {
         <div style="display:flex;flex-direction:column;align-items:center;gap:12px">${mascot(d.mood || 'happy', 200)}<div class="card" style="padding:12px 14px;font-size:16px;line-height:1.4;text-align:center">${rich(d.aside || '')}</div></div>
       </div>
       ${d.source ? `<div class="src">출처: ${esc(d.source)}</div>` : ''}
+    </div>`),
+
+  // 단컷·2컷 만화: 캐릭터(빅터 + 상대역)로 상황 표현. panels:[{who:'victor'|'other'|'both', bubble, sub, prop?}]
+  comic: d => page(1200, d.panels.length > 1 ? 760 : 700, `
+    <div style="padding:56px 64px 0">
+      <div class="kicker">${esc(d.kicker || '한 컷으로 보는 상황')}</div>
+      <h2 style="margin-top:12px;font-size:32px">${rich(d.title)}</h2>
+      <div style="display:grid;grid-template-columns:repeat(${d.panels.length},1fr);gap:22px;margin-top:24px">
+        ${d.panels.map((p, i) => `<div class="card" style="position:relative;padding:22px 24px 18px;min-height:420px;background:linear-gradient(180deg,#fff 0%,#F3F6FB 100%);overflow:hidden">
+          <div style="position:absolute;left:18px;top:14px;width:34px;height:34px;border-radius:50%;background:var(--navy);color:#fff;font-weight:800;font-size:18px;display:flex;align-items:center;justify-content:center">${i + 1}</div>
+          ${p.label ? `<div style="position:absolute;right:18px;top:16px" class="badge l">${esc(p.label)}</div>` : ''}
+          <div style="display:flex;flex-direction:column;gap:10px;margin:48px 0 0;align-items:${p.who === 'other' ? 'flex-end' : 'flex-start'}">
+            ${(p.bubbles || [p.bubble]).map((b, k) => `<div class="card" style="padding:14px 18px;font-size:${p.panelsBig ? 24 : 21}px;line-height:1.45;max-width:86%;border-radius:18px;${k % 2 === (p.who === 'other' ? 0 : 1) ? 'background:var(--green-soft);border-color:#CDEFDD;align-self:flex-end' : 'align-self:flex-start'}">${rich(b)}</div>`).join('')}
+          </div>
+          <div style="position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:${p.who === 'both' ? 'space-between' : p.who === 'other' ? 'flex-end' : 'flex-start'};align-items:flex-end;padding:0 10px">
+            ${p.who !== 'other' ? mascot(p.mood || 'normal', 200) : ''}
+            ${p.prop ? `<div style="font-size:64px;margin:0 8px 20px;line-height:1">${esc(p.prop)}</div>` : ''}
+            ${p.who !== 'victor' ? other(p.otherMood || 'normal', 200, p.otherColor) : ''}
+          </div>
+          ${p.sub ? `<div style="position:absolute;left:0;right:0;bottom:0;background:rgba(15,30,58,.85);color:#fff;font-size:17px;padding:8px 14px;text-align:center">${rich(p.sub)}</div>` : ''}
+        </div>`).join('')}
+      </div>
+      ${d.note ? `<div style="margin-top:16px;font-size:18px;color:var(--sub)">${rich(d.note)}</div>` : ''}
     </div>`),
 
   // 해외·외부 자료 캡처 액자 + 출처

@@ -39,14 +39,32 @@ async function human(page, text) {
 
 // 한 줄을 꾸밈 조각으로 나눈다: **굵게**(안에 [[형광펜|#색]] 가능) · [[형광펜|#색]] · 일반 글자
 //   → [{text}, {text, hl:'#fff8b2'}, {bold:true, parts:[{text}, {text, hl}]}]
+// 한 줄을 서식 단위(run)로 나눈다. 겹쳐 써도 된다.
+//   **굵게**  __밑줄__  {{글자색|#ff0010}}  [[형광펜|#fff8b2]]
+//   → [{ text, bold, ul, color, hl }]
 function tokens(line) {
-  const HL = /^\[\[([^|\]]+)\|(#[0-9a-f]{6})\]\]$/i;
-  const inner = s => s.split(/(\[\[[^\]]+\]\])/).filter(Boolean).map(x => { const m = x.match(HL); return m ? { text: m[1], hl: m[2].toLowerCase() } : { text: x }; });
-  return line.split(/(\*\*[^*]+\*\*)/).filter(Boolean).flatMap(x => {
-    const bo = x.match(/^\*\*([^*]+)\*\*$/);
-    return bo ? [{ bold: true, parts: inner(bo[1]) }] : inner(x);
-  });
+  const runs = [];
+  const walk = (s, st) => {
+    let i = 0;
+    while (i < s.length) {
+      const rest = s.slice(i);
+      let m;
+      if ((m = rest.match(/^\*\*([^*]+?)\*\*/))) { walk(m[1], { ...st, bold: true }); i += m[0].length; continue; }
+      if ((m = rest.match(/^__([^_]+?)__/))) { walk(m[1], { ...st, ul: true }); i += m[0].length; continue; }
+      if ((m = rest.match(/^\{\{([^|}]+)\|(#[0-9a-f]{6})\}\}/i))) { walk(m[1], { ...st, color: m[2].toLowerCase() }); i += m[0].length; continue; }
+      if ((m = rest.match(/^\[\[([^|\]]+)\|(#[0-9a-f]{6})\]\]/i))) { runs.push({ ...st, text: m[1], hl: m[2].toLowerCase() }); i += m[0].length; continue; }
+      // 다음 서식 시작 전까지 평문
+      const next = rest.slice(1).search(/\*\*[^*]+?\*\*|__[^_]+?__|\{\{[^|}]+\|#[0-9a-f]{6}\}\}|\[\[[^|\]]+\|#[0-9a-f]{6}\]\]/i);
+      const len = next < 0 ? rest.length : next + 1;
+      runs.push({ ...st, text: rest.slice(0, len) }); i += len;
+    }
+  };
+  walk(line, { bold: false, ul: false, color: null });
+  // 같은 서식의 이웃 평문은 합친다
+  return runs.reduce((a, r) => { const p = a[a.length - 1]; if (p && !p.hl && !r.hl && p.bold === r.bold && p.ul === r.ul && p.color === r.color) p.text += r.text; else a.push({ ...r }); return a; }, []);
 }
+// 서식 표기를 뺀 평문 (전수검사 대조용)
+function plainText(line) { return tokens(line).map(r => r.text).join(''); }
 
 class Editor {
   constructor(page, f) { this.page = page; this.f = f; }
@@ -116,12 +134,32 @@ class Editor {
   //   '## 소주제'  → 19 · 굵게      그 외 설명 줄 → 16 · 보통
   //   **강조**     → 그 부분만 굵게   [[INFJ|#bdfbfa]] → 형광펜   '' → 빈 줄
   //   줄 앞 '1. ' 같은 번호는 에디터가 자동 목록으로 바꾸면 바로 되돌려 글자 그대로 둔다
+  //   '### 큰 제목' → 24 · 굵게   '#s 작은 글' → 15 · 보통
+  //   __밑줄__  {{글자색|#ff0010}}  (굵게·형광펜과 겹쳐도 된다)
+  async setUnderline(on) {
+    const cur = await this.f.$eval('.se-underline-toolbar-button', b => b.classList.contains('se-is-selected')).catch(() => false);
+    if (cur !== on) await this.click('.se-underline-toolbar-button');
+  }
+  // 글자색: 팔레트에 같은 색이 없으면 가장 가까운 색. null 이면 기본(검정)으로
+  async setColor(hex) {
+    await this.click('.se-font-color-toolbar-button');
+    const want = hex || '#000000';
+    const list = await this.f.$$eval('.se-toolbar-item-font-color .se-color-palette', els => els.map(e => e.dataset.color || e.getAttribute('data-color')).filter(Boolean));
+    if (!list.length) { console.log('  글자색 팔레트 없음'); await this.key('Escape'); return; }
+    const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+    const w = rgb(want);
+    const best = list.includes(want) ? want : list.map(c => ({ c, d: rgb(c).reduce((s, v, k) => s + (v - w[k]) ** 2, 0) })).sort((a, b) => a.d - b.d)[0].c;
+    if (best !== want) console.log('  팔레트에 없는 글자색', want, '→', best);
+    await this.click(`.se-toolbar-item-font-color .se-color-palette[data-color="${best}"]`);
+  }
   async text(lines, { size = 'fs16', sub = 'fs19', align = 'center' } = {}) {
     for (let i = 0; i < lines.length; i++) {
       let line = lines[i];
-      const isSub = line.startsWith('## ');
-      if (isSub) line = line.slice(3);
-      if (line) await this.style({ size: isSub ? sub : size, bold: isSub, align });
+      let lineSize = size, isSub = false;
+      if (line.startsWith('### ')) { line = line.slice(4); lineSize = 'fs24'; isSub = true; }
+      else if (line.startsWith('## ')) { line = line.slice(3); lineSize = sub; isSub = true; }
+      else if (line.startsWith('#s ')) { line = line.slice(3); lineSize = 'fs15'; }
+      if (line) await this.style({ size: lineSize, bold: isSub, align });
       const num = line.match(/^\d+\. /);
       if (num) {
         const ol = () => this.f.$$eval('.se-content ol', a => a.length);
@@ -141,15 +179,18 @@ class Editor {
         await this.click('.se-background-color-toolbar-button');
         await this.click('.se-toolbar-item-background-color .se-color-palette-no-color');
       };
-      for (const p of tokens(line)) {
-        if (p.bold) {
-          // 굵게 안에 형광펜이 있어도 된다: **[[진단|#fff8b2]] → 식립** → 굵게 켜고 안쪽을 차례로
-          await this.click('.se-bold-toolbar-button');
-          for (const q of p.parts) { if (q.hl) await hl(q.text, q.hl); else await human(this.page, q.text); }
-          await this.click('.se-bold-toolbar-button');
-        } else if (p.hl) await hl(p.text, p.hl);
-        else await human(this.page, p.text);
+      // run마다 굵게·밑줄·글자색 상태를 맞추고 친다. 줄이 끝나면 줄 기본 상태로 되돌린다
+      let bold = isSub, ul = false, color = null;
+      for (const r of tokens(line)) {
+        if (!r.text) continue;
+        if (r.bold !== bold) { await this.click('.se-bold-toolbar-button'); bold = r.bold; }
+        if (r.ul !== ul) { await this.setUnderline(r.ul); ul = r.ul; }
+        if ((r.color || null) !== color) { await this.setColor(r.color || null); color = r.color || null; }
+        if (r.hl) await hl(r.text, r.hl); else await human(this.page, r.text);
       }
+      if (bold !== isSub) await this.click('.se-bold-toolbar-button');
+      if (ul) await this.setUnderline(false);
+      if (color) await this.setColor(null);
       if (i < lines.length - 1) { await this.key('Enter'); await pause(LINE_PAUSE); }
     }
     await pause(800);

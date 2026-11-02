@@ -6,10 +6,10 @@ const [head, ...rest] = raw.split(/\n\s*\n/);
 const meta = {}; for (const l of head.split('\n')) { const m = l.match(/^\s*([^:：]+)[:：]\s*(.*)$/); if (m) meta[m[1].trim()] = m[2].trim(); }
 const dir = meta['사진폴더'] || path.dirname(src);
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[\[(.+?)\|(#[0-9a-fA-F]{3,6})\]\]/g, '<mark style="background:$2">$1</mark>');
+const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/__(.+?)__/g, '<u>$1</u>').replace(/\{\{([^|}]+)\|(#[0-9a-fA-F]{3,6})\}\}/g, '<span style="color:$2">$1</span>').replace(/\[\[(.+?)\|(#[0-9a-fA-F]{3,6})\]\]/g, '<mark style="background:$2">$1</mark>');
 const tags = (meta['태그'] || '').split(/[,，\s]+/).filter(Boolean);
 let html = '', para = [];
-const flush = () => { if (!para.length) return; html += '<div class="p">' + para.map(l => l.startsWith('## ') ? `<p class="h">${inline(l.slice(3))}</p>` : l.trim() === '' ? '<p>&nbsp;</p>' : `<p>${inline(l)}</p>`).join('') + '</div>'; para = []; };
+const flush = () => { if (!para.length) return; html += '<div class="p">' + para.map(l => l.startsWith('### ') ? `<p class="h24">${inline(l.slice(4))}</p>` : l.startsWith('## ') ? `<p class="h">${inline(l.slice(3))}</p>` : l.startsWith('#s ') ? `<p class="s">${inline(l.slice(3))}</p>` : l.trim() === '' ? '<p>&nbsp;</p>' : `<p>${inline(l)}</p>`).join('') + '</div>'; para = []; };
 let quoteBuf = [];
 const flushQ = () => { if (!quoteBuf.length) return; html += `<blockquote>${quoteBuf.map(q => `<p>${inline(q)}</p>`).join('')}</blockquote>`; quoteBuf = []; };
 for (const l of rest.join('\n\n').split('\n')) {
@@ -20,6 +20,7 @@ for (const l of rest.join('\n\n').split('\n')) {
   else if (/^\[사진\]/.test(t)) { flush(); const f = t.replace(/^\[사진\]\s*/, ''); const p = path.isAbsolute(f) ? f : path.join(dir, f); html += `<figure><img src="file:///${p.replace(/\\/g, '/')}"><figcaption>${esc(f)}</figcaption></figure>`; }
   else if (/^\[링크\]/.test(t)) { flush(); html += '<div class="link">🔗 블로그 링크 카드</div>'; }
   else if (t === '[해시태그]') { flush(); html += '<div class="tags">' + tags.map(x => '#' + esc(x)).join(' ') + '</div>'; }
+  else if (t === '[빈줄]') { para.push(''); }
   else if (t === '') { flush(); }
   else para.push(t);
 }
@@ -36,6 +37,11 @@ h1{font-size:30px;line-height:1.35;margin:0 0 6px;letter-spacing:-.02em}
 .info{font-size:13px;color:#999;margin-bottom:28px}
 .p p{font-size:16px;line-height:1.85;margin:0}
 .p p.h{font-size:19px;font-weight:700;margin-top:6px}
+.p p.h24{font-size:24px;font-weight:700}
+.p p.s{font-size:13px;color:#888}
+.post{text-align:center}
+blockquote{text-align:left;display:inline-block;min-width:60%}
+u{text-decoration:underline;text-underline-offset:3px}
 blockquote{margin:22px 0;padding:6px 0 6px 18px;border-left:4px solid #222;font-size:18px;font-weight:700;line-height:1.6}
 blockquote p{margin:2px 0}
 hr{border:0;border-top:1px solid #ddd;margin:26px 0}

@@ -52,9 +52,11 @@ test('layout.js 원고: quoteStyle/lineStyle 선택 항목(이름)과 블록 sty
   assert.strictEqual(S.blocks[1].style, 'quotation_bubble'); assert.strictEqual(S.blocks[2].style, 'line2');
 });
 
-test('editor.tokens: 굵게 안의 형광펜까지 조각으로 나눈다', () => {
+test('editor.tokens: 굵게·밑줄·글자색·형광펜을 겹쳐도 run 으로 나눈다', () => {
   const { tokens } = require('./editor');
-  assert.deepStrictEqual(tokens('**[[진단|#fff8b2]] → 식립**'), [{ bold: true, parts: [{ text: '진단', hl: '#fff8b2' }, { text: ' → 식립' }] }]);
-  assert.deepStrictEqual(tokens('앞 [[CT|#FFF8B2]] 뒤 **굵게**'), [{ text: '앞 ' }, { text: 'CT', hl: '#fff8b2' }, { text: ' 뒤 ' }, { bold: true, parts: [{ text: '굵게' }] }]);
-  assert.deepStrictEqual(tokens('그냥 줄'), [{ text: '그냥 줄' }]);
+  const R = (text, o = {}) => ({ bold: false, ul: false, color: null, text, ...o });
+  assert.deepStrictEqual(tokens('**[[진단|#fff8b2]] → 식립**'), [R('진단', { bold: true, hl: '#fff8b2' }), R(' → 식립', { bold: true })]);
+  assert.deepStrictEqual(tokens('앞 [[CT|#FFF8B2]] 뒤 **굵게**'), [R('앞 '), R('CT', { hl: '#fff8b2' }), R(' 뒤 '), R('굵게', { bold: true })]);
+  assert.deepStrictEqual(tokens('그냥 줄'), [R('그냥 줄')]);
+  assert.deepStrictEqual(tokens('__밑줄 {{빨강|#FF0010}}__ 끝'), [R('밑줄 ', { ul: true }), R('빨강', { ul: true, color: '#ff0010' }), R(' 끝')]);
 });

@@ -53,6 +53,7 @@ function parseTxt(file) {
     }
     else if (/^\[링크\]/.test(t)) { flush(); S.blocks.push({ link: t.replace(/^\[링크\]\s*/, '') || true }); }
     else if (t === '[해시태그]') { flush(); S.blocks.push({ hashtags: true }); }
+    else if (t === '[빈줄]') (buf = buf || []).push('');   // 같은 본문 칸 안의 빈 줄(문단 사이 띄우기)
     else (buf = buf || []).push(t);
   }
   flush();

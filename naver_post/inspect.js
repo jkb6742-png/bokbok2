@@ -1,7 +1,11 @@
 // 전수검사: 에디터에 들어간 내용을 처음부터 끝까지 원고와 대조
 const hex2rgb = h => `rgb(${parseInt(h.slice(1, 3), 16)}, ${parseInt(h.slice(3, 5), 16)}, ${parseInt(h.slice(5, 7), 16)})`;
-const plain = l => l.replace(/^## /, '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\[\[([^|]+)\|#[0-9a-f]{6}\]\]/gi, '$1');
-const boldOf = l => l.startsWith('## ') ? plain(l) : [...l.matchAll(/\*\*([^*]+)\*\*/g)].map(m => m[1]).join('').replace(/\[\[([^|]+)\|#[0-9a-f]{6}\]\]/gi, '$1');   // 굵게 안의 형광펜 표시는 글자만
+const stripInline = s => s.replace(/\*\*([^*]+?)\*\*/g, '$1').replace(/__([^_]+?)__/g, '$1').replace(/\{\{([^|}]+)\|#[0-9a-f]{6}\}\}/gi, '$1').replace(/\[\[([^|\]]+)\|#[0-9a-f]{6}\]\]/gi, '$1');
+const headOf = l => l.startsWith('### ') ? 'h24' : l.startsWith('## ') ? 'h19' : l.startsWith('#s ') ? 's15' : '';
+const body = l => l.replace(/^### |^## |^#s /, '');
+const plain = l => stripInline(body(l));
+const sizeOf = l => headOf(l) === 'h24' ? '24' : headOf(l) === 'h19' ? '19' : headOf(l) === 's15' ? '15' : '16';
+const boldOf = l => /^h/.test(headOf(l)) ? plain(l) : [...body(l).matchAll(/\*\*([^*]+?)\*\*/g)].map(m => m[1]).join('').replace(/__([^_]+?)__/g, '$1').replace(/\{\{([^|}]+)\|#[0-9a-f]{6}\}\}/gi, '$1').replace(/\[\[([^|\]]+)\|#[0-9a-f]{6}\]\]/gi, '$1');   // 굵게 안의 다른 표시는 글자만
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 async function inspect(f, S) {
@@ -65,7 +69,7 @@ async function inspect(f, S) {
         const bad = [];
         c.ps.forEach((p, k) => {
           const l = exp[k]; if (!p.t || l === undefined) return;
-          const size = b.hashtags ? '15' : l.startsWith('## ') ? '19' : '16';
+          const size = b.hashtags ? '15' : sizeOf(l);
           if (!p.center) bad.push(`"${p.t.slice(0, 15)}" 정렬`);
           else if (p.fs.some(x => x !== size)) bad.push(`"${p.t.slice(0, 15)}" 크기 ${p.fs.join('/')}≠${size}`);
           else if (p.bold.replace(/\s/g, '') !== boldOf(l).replace(/\s/g, '')) bad.push(`"${p.t.slice(0, 15)}" 굵게 "${p.bold}"≠"${boldOf(l)}"`);
