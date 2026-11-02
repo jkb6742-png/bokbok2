@@ -1,0 +1,18 @@
+{
+  "name": "bokbok-tools",
+  "version": "2.0.0",
+  "private": true,
+  "description": "bokbok 블로그 육성·발행 앱(bokbok_app) + 네이버 입력 엔진(naver_post) + 이미지 템플릿",
+  "scripts": {
+    "start": "node bokbok_app/server.js",
+    "test": "node --test bokbok_app/gen/test/*.test.js bokbok_app/gen/cards/test/*.test.js bokbok_app/insight/test/*.test.js bokbok_app/engines/test/*.test.js bokbok_app/net/test/*.test.js naver_post/*.test.js",
+    "chrome": "npx puppeteer browsers install chrome@149.0.7827.22"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "puppeteer-core": "25.1.0"
+  },
+  "devDependencies": {
+    "@puppeteer/browsers": "^2.10.0"
+  }
+}
