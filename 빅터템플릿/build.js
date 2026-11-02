@@ -89,7 +89,7 @@ const T = {
       ${d.lines ? `<div style="display:flex;flex-direction:column;gap:12px;margin-top:34px">${d.lines.map(t => `<div class="tick" style="font-size:23px">${rich(t)}</div>`).join('')}</div>` : ''}
     </div>
     <div style="position:absolute;left:64px;right:48px;bottom:96px;display:flex;align-items:flex-end;justify-content:space-between;gap:16px">
-      <div class="card" style="padding:22px 26px;max-width:580px;font-size:23px;line-height:1.5;border-left:8px solid var(--green)"><b style="color:var(--green)">빅터</b>&nbsp; ${rich(d.quote || '')}</div>
+      <div class="card" style="padding:22px 26px;max-width:580px;font-size:23px;line-height:1.5;background:var(--green-soft);border-color:#CDEFDD;border-radius:18px"><b style="color:#0b8a57">빅터</b>&nbsp; ${rich(d.quote || '')}</div>
       ${mascot(d.mood || 'point', 290)}
     </div>`),
 
@@ -120,7 +120,7 @@ const T = {
           <div style="height:34px;background:#EEF1F6;border-radius:8px;overflow:hidden"><div style="width:${Math.round(b.value / max * 100)}%;height:100%;background:${b.color || 'var(--navy)'};border-radius:8px"></div></div>
           <div style="font-size:26px;font-weight:800;color:${b.color || 'var(--navy)'};text-align:right;font-variant-numeric:tabular-nums">${esc(b.text || b.value + '%')}</div></div>`).join('')}
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:18px"><div class="src" style="margin:0">${d.source ? '출처: ' + esc(d.source) : ''}</div>${d.note ? `<div class="card" style="padding:14px 20px;font-size:19px;border-left:6px solid var(--green);max-width:720px">${rich(d.note)}</div>` : ''}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:18px"><div class="src" style="margin:0">${d.source ? '출처: ' + esc(d.source) : ''}</div>${d.note ? `<div class="card" style="padding:14px 20px;font-size:19px;background:var(--green-soft);border-color:#CDEFDD;max-width:720px">${rich(d.note)}</div>` : ''}</div>
     </div>`); },
 
   // 타임라인(세로)
@@ -155,7 +155,7 @@ const T = {
       </div>
       <div style="display:flex;gap:18px;align-items:center;margin-top:22px">
         ${mascot(d.mood || 'think', 120)}
-        <div class="card" style="padding:16px 22px;font-size:20px;line-height:1.5;border-left:6px solid var(--warn);flex:1">${rich(d.note || '')}</div>
+        <div class="card" style="padding:16px 22px;font-size:20px;line-height:1.5;background:var(--warn-soft);border-color:#F3E2B3;flex:1">${rich(d.note || '')}</div>
       </div>
       ${d.source ? `<div class="src">출처: ${esc(d.source)}</div>` : ''}
     </div>`),
@@ -169,7 +169,7 @@ const T = {
         <div style="display:grid;grid-template-columns:200px 1fr 1fr;background:var(--navy);color:#fff;font-size:21px;font-weight:700"><div style="padding:16px 24px">구분</div><div style="padding:16px 24px;background:rgba(255,255,255,.08)">${esc(d.colA)}</div><div style="padding:16px 24px">${esc(d.colB)}</div></div>
         ${d.rows.map((r, i) => `<div style="display:grid;grid-template-columns:200px 1fr 1fr;font-size:21px;line-height:1.45;${i ? 'border-top:1px solid var(--line)' : ''}"><div style="padding:18px 24px;font-weight:700;color:var(--sub);background:#FAFBFD">${esc(r[0])}</div><div style="padding:18px 24px">${rich(r[1])}</div><div style="padding:18px 24px;font-weight:600">${rich(r[2])}</div></div>`).join('')}
       </div>
-      <div style="display:flex;gap:18px;align-items:center;margin-top:22px">${mascot(d.mood || 'normal', 110)}<div class="card" style="padding:14px 22px;font-size:20px;line-height:1.5;border-left:6px solid var(--green);flex:1">${rich(d.note || '')}</div></div>
+      <div style="display:flex;gap:18px;align-items:center;margin-top:22px">${mascot(d.mood || 'normal', 110)}<div class="card" style="padding:14px 22px;font-size:20px;line-height:1.5;background:var(--green-soft);border-color:#CDEFDD;flex:1">${rich(d.note || '')}</div></div>
       ${d.source ? `<div class="src">출처: ${esc(d.source)}</div>` : ''}
     </div>`),
 
@@ -227,6 +227,7 @@ const T = {
 };
 
 async function build(dataFile, outDir) {
+  outDir = path.resolve(outDir);
   const data = require(path.resolve(dataFile));
   BRAND = data.brand || BRAND;
   fs.mkdirSync(outDir, { recursive: true });
