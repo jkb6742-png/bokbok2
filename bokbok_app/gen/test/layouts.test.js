@@ -51,9 +51,9 @@ test('pickVariant: 최근 글과 다른 정리 제목·도입', () => {
 });
 
 test('styles: 6종 + 최근 3개 피하기 + 금지 규칙 포함 프롬프트', () => {
-  assert.deepStrictEqual(styles.STYLE_IDS, ['photo', 'character', 'flat', 'watercolor', '3d', 'minimal']);
+  assert.deepStrictEqual(styles.STYLE_IDS, ['photo', 'character', 'flat', 'watercolor', '3d', 'minimal', 'editorial']);
   const h = [{ imageStyle: 'photo' }, { imageStyle: 'flat' }, { imageStyle: '3d' }, { imageStyle: 'minimal' }];
-  assert.deepStrictEqual(styles.styleCandidates(h), ['character', 'watercolor', 'minimal']);
+  assert.deepStrictEqual(styles.styleCandidates(h), ['character', 'watercolor', 'minimal', 'editorial']);
   for (const r of randoms) assert.ok(!['photo', 'flat', '3d'].includes(styles.pickStyle(h, () => r)));
   const p = styles.buildImagePrompt('한강 공원 벤치 위 커피 두 잔', 'watercolor', { color: '#3F9470' });
   assert.match(p, /한강 공원/);

@@ -26,6 +26,10 @@ const STYLES = {
     id: 'minimal', label: '미니멀 정물', desc: '여백 많은 배경 위 사물 하나',
     prompt: 'Minimal still life: a single meaningful object on a plain seamless backdrop with generous negative space, soft even lighting, calm muted palette, centered composition, quiet and refined mood.',
   },
+  editorial: {
+    id: 'editorial', label: '신문 삽화(상황 연출)', desc: '경제면 삽화처럼 그날 이슈 장면을 연출. 인물은 뒷모습·실루엣·상징물로, 광택 3D·AI풍 금지',
+    prompt: 'Newspaper business-section editorial illustration that stages the actual situation of the story as one readable scene (for example a podium at a government building, a signed tariff document, container ships at a port, a trading floor screen, a central bank facade). Hand-drawn feel with ink line work and flat muted color fills on a slightly textured paper background, restrained palette (navy, warm beige, one green accent), natural proportions, no glossy 3D rendering, no neon gradients, no generic stock-art look. Public figures are suggested only through context, back view, distant silhouette or symbolic props (a red tie, a podium, a flag), never a recognizable face or caricature.',
+  },
 };
 const STYLE_IDS = Object.keys(STYLES);
 

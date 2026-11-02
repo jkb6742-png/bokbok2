@@ -100,7 +100,7 @@ test('readHistory + auto: 최근 3개와 다른 레이아웃·스타일·정리 
   for (let i = 0; i < 30; i++) {
     const P = writer.planDraft({ keyword: '키워드', layout: 'auto', imageStyle: 'auto' }, PROFILE, { history: h, rand: () => i / 30 });
     assert.ok(!['list', 'qa', 'classic'].includes(P.layout), P.layout);
-    assert.deepStrictEqual(P.styleCandidates, ['watercolor', '3d', 'minimal']);
+    assert.deepStrictEqual(P.styleCandidates, ['watercolor', '3d', 'minimal', 'editorial']);
     assert.ok(!['오늘의 포스팅을 정리하면?', '한 번에 정리해 보면', '마지막으로 정리'].includes(P.variant.closingHeading));
   }
 });
