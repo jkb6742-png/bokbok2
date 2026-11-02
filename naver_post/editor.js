@@ -183,7 +183,8 @@ class Editor {
       let bold = isSub, ul = false, color = null;
       for (const r of tokens(line)) {
         if (!r.text) continue;
-        if (r.bold !== bold) { await this.click('.se-bold-toolbar-button'); bold = r.bold; }
+        const wantBold = isSub || r.bold;   // 소주제 줄은 전체가 굵게, 일반 줄은 **…** 만
+        if (wantBold !== bold) { await this.click('.se-bold-toolbar-button'); bold = wantBold; }
         if (r.ul !== ul) { await this.setUnderline(r.ul); ul = r.ul; }
         if ((r.color || null) !== color) { await this.setColor(r.color || null); color = r.color || null; }
         if (r.hl) await hl(r.text, r.hl); else await human(this.page, r.text);
