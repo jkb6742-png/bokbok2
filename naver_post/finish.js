@@ -62,8 +62,12 @@ async function finish(page, f, S, reportName) {
   console.log(`\n전수검사: ${r.pass ? '통과' : '실패 ' + r.fails.length + '건'} → ${out}`);
   r.fails.forEach(x => console.log('  ✗', x));
 
+  // 해시태그 줄에서만 실패한 경우는 발행을 막지 않는다 (사용자 지시: 해시태그 상관없이 발행)
+  const hardFails = r.fails.filter(x => !/해시태그|#[^ ]+ #/.test(x));
+  const okToPublish = r.pass || (hardFails.length === 0 && r.fails.length > 0);
+  if (!r.pass && okToPublish) console.log('  (해시태그 항목만 실패 → 발행 진행)');
   let published = null;
-  if (r.pass && process.env.PUBLISH) {
+  if (okToPublish && process.env.PUBLISH) {
     const btn = await f.evaluateHandle(() => [...document.querySelectorAll('button')].find(b => /confirm_btn/.test(b.className) && b.innerText.includes('발행')));
     if (btn.asElement()) {
       await btn.asElement().click();
