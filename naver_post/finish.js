@@ -2,7 +2,7 @@
 // write.js 마지막 단계. 단독 실행: 이미 입력된 글쓰기 탭에서 태그만 다시 넣고 검사·발행
 //   PUBLISH=1 node finish.js ../원고데이터/05_NF_layout.js
 const path = require('path'), fs = require('fs');
-const { sleep, pause } = require('./common');
+const { sleep, pause, BLOG_ID } = require('./common');
 const { releaseMods } = require('./editor');
 const { inspect } = require('./inspect');
 
@@ -65,7 +65,16 @@ async function finish(page, f, S, reportName) {
   let published = null;
   if (r.pass && process.env.PUBLISH) {
     const btn = await f.evaluateHandle(() => [...document.querySelectorAll('button')].find(b => /confirm_btn/.test(b.className) && b.innerText.includes('발행')));
-    if (btn.asElement()) { await btn.asElement().click(); await sleep(5000); published = page.url(); console.log('발행 완료:', published); }
+    if (btn.asElement()) {
+      await btn.asElement().click();
+      // 발행 뒤 글 주소(logNo)로 넘어갈 때까지 최대 20초 기다린다 (5초 뒤 바로 읽으면 글쓰기 주소가 찍히는 경우가 있음)
+      for (let t = 0; t < 20 && !/\/\d{9,}(\?|$)|logNo=\d+/.test(page.url()); t++) await sleep(1000);
+      published = page.url();
+      if (!/\/\d{9,}(\?|$)|logNo=\d+/.test(published)) {
+        try { const r = await page.evaluate(async id => (await fetch(`https://blog.naver.com/PostTitleListAsync.naver?blogId=${id}&currentPage=1&countPerPage=1`)).json(), BLOG_ID); const ln = r && r.postList && r.postList[0] && r.postList[0].logNo; if (ln) published = `https://blog.naver.com/${BLOG_ID}/${ln}`; } catch { }
+      }
+      console.log('발행 완료:', published);
+    }
     else console.log('최종 발행 버튼을 못 찾음 → 직접 클릭');
   } else console.log('발행 전 멈춤. 창에서 확인 후 직접 [발행]');
   console.log('@@결과 ' + JSON.stringify({ pass: r.pass, fails: r.fails, report: out, published }));
