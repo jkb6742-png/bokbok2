@@ -110,10 +110,16 @@ class Editor {
       // 글자 크기 목록이 늦게 열리거나(링크 카드 뒤) 첫 클릭이 먹지 않을 때가 있어 목록이 보일 때까지 기다리고 한 번 더 누른다
       const opt = `.se-toolbar-item-font-size-code button[data-value="${size}"]`;
       let el = null;
-      for (let t = 0; t < 3 && !el; t++) {
-        if (t) { await this.lastLine().catch(() => { }); await pause(400); }
+      for (let t = 0; t < 5 && !el; t++) {
+        if (t) {
+          // 목록이 안 열리면: Escape → 마지막 본문 줄 → (3번째부터는) 새 본문 칸을 만들어 커서를 확실히 본문에 둔다
+          await this.page.keyboard.press('Escape').catch(() => { }); await pause(300);
+          if (t >= 2) await this.newLine().catch(() => { }); else await this.lastLine().catch(() => { });
+          await pause(500);
+        }
         await this.click('.se-font-size-code-toolbar-button');
         el = await this.f.waitForSelector(opt, { visible: true, timeout: 3000 }).catch(() => null);
+        if (!el) { const have = await this.f.$$eval('.se-toolbar-item-font-size-code button[data-value]', a => a.map(b => b.dataset.value).join(',')).catch(() => '?'); console.log(`  글자 크기 목록 재시도 ${t + 1}: ${size} 없음 (보이는 목록: ${have || '없음'})`); }
       }
       if (!el) throw new Error('없음: ' + opt);
       await el.click(); await pause(500);
