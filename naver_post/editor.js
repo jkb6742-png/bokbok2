@@ -112,9 +112,9 @@ class Editor {
       let el = null;
       for (let t = 0; t < 5 && !el; t++) {
         if (t) {
-          // 목록이 안 열리면: Escape → 마지막 본문 줄 → (3번째부터는) 새 본문 칸을 만들어 커서를 확실히 본문에 둔다
+          // 목록이 안 열리면: Escape → 마지막 본문 줄로 커서를 옮기고 다시
           await this.page.keyboard.press('Escape').catch(() => { }); await pause(300);
-          if (t >= 2) await this.newLine().catch(() => { }); else await this.lastLine().catch(() => { });
+          await this.lastLine().catch(() => { });   // (새 본문 칸 추가는 빈 칸이 남아 전수검사에 걸리므로 안 한다)
           await pause(500);
         }
         await this.click('.se-font-size-code-toolbar-button');

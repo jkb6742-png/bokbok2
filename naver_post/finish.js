@@ -36,7 +36,17 @@ async function setTags(page, f, tags) {
 
 async function finish(page, f, S, reportName) {
   // 발행 설정 창 열기 (이미 열려 있으면 그대로)
-  if (!await f.$('#tag-input')) { await (await f.$('button[class^="publish_btn"]')).click(); await pause(1500); }
+  if (!await f.$('#tag-input')) {
+    // 발행 버튼: 열린 메뉴·레이어가 있으면 Escape로 닫고, 셀렉터 두 가지로 최대 4번 찾는다
+    let btn = null;
+    for (let t = 0; t < 4 && !btn; t++) {
+      if (t) { await page.keyboard.press('Escape').catch(() => { }); await pause(800); }
+      btn = await f.$('button[class^="publish_btn"]') || await f.$('button[class*="publish_btn"]') || await page.$('button[class*="publish_btn"]');
+      if (!btn) { const seen = await f.$$eval('button', a => a.map(b => (b.className || '').toString().slice(0, 30) + ':' + (b.innerText || '').trim().slice(0, 8)).filter(x => /발행|publish/i.test(x)).join(' | ')).catch(() => '?'); console.log(`  발행 버튼 재시도 ${t + 1} (보이는 것: ${seen || '없음'})`); }
+    }
+    if (!btn) throw new Error('발행 버튼을 찾지 못함');
+    await btn.click(); await pause(1500);
+  }
   // 카테고리 선택 상자: 이미 펼쳐져 있으면(이어서 하기) 다시 누르면 닫히므로, 옵션이 안 보일 때만 누른다
   const normCat = s => String(s || '').replace(/[ \s]+/g, ' ').trim();   // 네이버가 넣는 특수 공백(NBSP)·연속 공백 무시
   const visibleOptions = async () => (await f.$$('span[class^="option"]')).filter(Boolean);
