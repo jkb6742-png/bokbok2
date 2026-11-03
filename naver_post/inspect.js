@@ -72,8 +72,9 @@ async function inspect(f, S) {
         c.ps.forEach((p, k) => {
           const l = exp[k]; if (!p.t || l === undefined) return;
           const size = b.hashtags ? '15' : sizeOf(l);
+          const sizeOk = b.hashtags ? p.fs.every(x => x === '15' || x === '16') : p.fs.every(x => x === size);   // 해시태그 줄은 링크 카드 뒤 크기 목록이 안 열려 16으로 남을 수 있어 15·16 허용
           if (!p.center) bad.push(`"${p.t.slice(0, 15)}" 정렬`);
-          else if (p.fs.some(x => x !== size)) bad.push(`"${p.t.slice(0, 15)}" 크기 ${p.fs.join('/')}≠${size}`);
+          else if (!sizeOk) bad.push(`"${p.t.slice(0, 15)}" 크기 ${p.fs.join('/')}≠${size}`);
           else if (p.bold.replace(/\s/g, '') !== boldOf(l).replace(/\s/g, '')) bad.push(`"${p.t.slice(0, 15)}" 굵게 "${p.bold}"≠"${boldOf(l)}"`);
         });
         check(`${n}. 서식(정렬·크기·굵게)`, bad.length === 0, bad.length ? `${bad.length}줄 다름 · ${bad.slice(0, 3).join(' / ')}` : '전 줄 일치');

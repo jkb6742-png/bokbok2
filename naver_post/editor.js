@@ -121,8 +121,8 @@ class Editor {
         el = await this.f.waitForSelector(opt, { visible: true, timeout: 3000 }).catch(() => null);
         if (!el) { const have = await this.f.$$eval('.se-toolbar-item-font-size-code button[data-value]', a => a.map(b => b.dataset.value).join(',')).catch(() => '?'); console.log(`  글자 크기 목록 재시도 ${t + 1}: ${size} 없음 (보이는 목록: ${have || '없음'})`); }
       }
-      if (!el) throw new Error('없음: ' + opt);
-      await el.click(); await pause(500);
+      if (!el) { console.log(`  글자 크기 ${size} 적용 실패 → 지금 크기(${cur})로 계속 (링크 카드 뒤에는 목록이 안 열리는 경우가 있음)`); await this.page.keyboard.press('Escape').catch(() => { }); }
+      else { await el.click(); await pause(500); }
     }
     const on = await this.f.$eval('.se-bold-toolbar-button', b => b.classList.contains('se-is-selected'));
     if (on !== bold) await this.click('.se-bold-toolbar-button');
