@@ -290,6 +290,15 @@
     nm.textContent = def.name;          // 묶음(NAVER)·영문 이름(BLOG)은 CSS가 data-*로 그린다
     nm.setAttribute('data-grp', grp);
     nm.setAttribute('data-en', en);
+    // 로그인 정보: 서비스 이름 아래에 지금 로그인한 대표 아이디
+    if (BB.user) {
+      const me = document.createElement('div');
+      me.className = 'side-user';
+      me.innerHTML = '<span class="side-user-k">로그인</span><b></b><em></em>';
+      me.querySelector('b').textContent = BB.user.name || BB.user.email || '';
+      me.querySelector('em').textContent = (BB.user.email && BB.user.email !== BB.user.name ? BB.user.email : '') + (BB.user.role === 'admin' ? (BB.user.email && BB.user.email !== BB.user.name ? ' · ' : '') + '관리자' : '');
+      nm.appendChild(me);
+    }
     side.appendChild(nm);
     const top = document.createElement('div');
     top.className = 'side-top';
@@ -304,6 +313,8 @@
     const nav = document.createElement('div');
     nav.className = 'side-nav';
     (def.nav || []).forEach(([p, label]) => {
+      // '-' 로 시작하는 항목 = 메뉴 묶음 제목(누를 수 없음)
+      if (String(p).charAt(0) === '-') { const g = document.createElement('div'); g.className = 'side-label side-grp'; g.textContent = label; nav.appendChild(g); return; }
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = label;   // 번호(01, 02…)는 CSS counter로 — 글자는 메뉴 이름 그대로
@@ -323,11 +334,13 @@
   // 서비스 메타: 묶음(영문) · 영문 이름 · 짧은 메타 줄 · 단색 아이콘(currentColor)
   const SVG = d => `<svg viewBox="0 0 48 48" aria-hidden="true">${d}</svg>`;
   const GROUPS = [
-    ['NAVER', '네이버', '블로그와 카페에 글을 올립니다.', ['blog', 'cafe']],
+    ['NAVER', '네이버', '병원 블로그 지수와 블로그·카페 발행.', ['clinic', 'blog', 'cafe']],
     ['META', '메타', '페이스북 · 인스타그램 · 쓰레드에 게시합니다.', ['facebook', 'instagram', 'threads']],
     ['GLOBAL', '글로벌', '해외 커뮤니티와 SNS에 게시합니다.', ['reddit', 'twitter']],
   ];
   const LOOK = {
+    clinic: { en: 'CLINIC INDEX', tags: ['병의원 전용', '지역 키워드', '의료법 검수'],
+      icon: SVG('<g fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"><path d="M9 40V16l15-8 15 8v24z"/><path d="M24 17v12M18 23h12" stroke-linecap="round"/></g>') },
     blog: { en: 'BLOG', tags: ['사람 속도 입력', '전수검사'],
       icon: SVG('<path fill="currentColor" d="M12 9h8l8 12.4V9h8v30h-8l-8-12.4V39h-8z"/>') },
     cafe: { en: 'CAFE', tags: ['공식 API', '게시판 발행'],
@@ -388,7 +401,7 @@
         `<section class="home-hero">` +
           `<div><div class="home-eb">bokbok / control room<span>v2</span></div>` +
           `<h1 class="home-display">Multi-channel<span>publishing</span></h1>` +
-          `<p class="home-lede">${e(hello)}, ${e((BB.user && BB.user.name) || '')}님. 원고 한 편을 블로그·카페·SNS 채널로 나눠 올립니다.</p></div>` +
+          `<p class="home-lede">${e(hello)}, ${e((BB.user && BB.user.name) || '')}님. 병의원 블로그를 진단하고, 원고를 만들어 블로그·카페·SNS로 올립니다.</p></div>` +
           `<div class="chrome-wrap" aria-hidden="true"><div class="chrome"><i></i></div></div>` +
         `</section>` +
         `<dl class="svc-sum">` +
@@ -546,10 +559,11 @@
     if (!def) { location.replace('#/home'); return; }
     if (!BB.canSee(head)) { BB.toast && BB.toast('이 서비스는 사용 권한이 없습니다. 관리자에게 요청하세요'); location.replace('#/home'); return; }
     const nav = def.nav || [];
-    if (!parts[1] && nav.length) { location.replace('#/' + head + '/' + nav[0][0]); return; }
+    const first = nav.find(n => String(n[0]).charAt(0) !== '-');
+    if (!parts[1] && first) { location.replace('#/' + head + '/' + first[0]); return; }
     const page = parts[1] || null;
     BB.params = parts.slice(2);
-    const hit = nav.find(n => n[0] === page);
+    const hit = nav.find(n => n[0] === page && String(n[0]).charAt(0) !== '-');
     showShell(true);
     renderSide(def, page);
     const [grp, en] = metaOf(def);

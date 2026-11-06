@@ -264,6 +264,63 @@ class Editor {
     await pause(1500);
   }
 
+  // 표: 툴바 '표'(기본 3×3, 현재 칸 뒤에 들어감) → 가운데 정렬 → 행·열 수 맞추기 → 칸마다 클릭해 가운데·15·첫 행 굵게로 입력
+  //   → 표 뒤에는 본문 칸이 자동으로 안 생기므로 '본문 추가'로 새 줄을 만들고 커서를 둔다 (2026-11-04 probe_table2로 확인)
+  //   rows: [['머리1','머리2'], ['a','b'], …] 2~4열
+  async table(rows) {
+    const T = '.se-content .se-component.se-table';
+    // 새로 생긴 표는 순서로 잡는다: 커서는 늘 글 끝이라 새 표 = n0번째(0부터).
+    //   ':last-of-type'(표 뒤에 다른 칸이 있으면 못 찾음)과 붙여 둔 속성(편집기가 칸을 다시 그리면 지워짐)은 2026-11-05 빅터 경상수지 글에서 둘 다 실패
+    const n0 = await this.f.$$eval(T, a => a.length);
+    await this.click('.se-table-toolbar-button'); await pause(1200);
+    if (await this.f.$$eval(T, a => a.length) <= n0) throw new Error('표가 들어가지 않았습니다');
+    const tbl = async () => { const a = await this.f.$$(T); if (!a[n0]) throw new Error(`새 표를 찾지 못함 (표 ${a.length}개)`); return a[n0]; };
+    await this.f.click('.se-table-align-center-toolbar-button').catch(() => console.log('  표 가운데 정렬 단추 없음'));
+    await pause(400);
+    const count = async () => (await tbl()).evaluate(t => ({ r: t.querySelectorAll('tr').length, c: t.querySelector('tr').querySelectorAll('td').length }));
+    const ctl = async (axis, kind) => { const b = await (await tbl()).$$(`.se-cell-controlbar-${axis} .se-cell-${kind}-button`); return b[b.length - 1]; };
+    const want = { r: rows.length, c: rows[0].length };
+    for (const [axis, k] of [['column', 'c'], ['row', 'r']]) {
+      for (let g = 0; g < 8; g++) {
+        const cur = await count();
+        if (cur[k] === want[k]) break;
+        if (cur[k] < want[k]) { await (await ctl(axis, 'add')).evaluate(x => x.click()); await pause(600); continue; }
+        // 줄이기: 마지막 열/행 선택 → 셀 메뉴 '삭제'
+        await (await ctl(axis, 'select')).evaluate(x => x.click()); await pause(500);
+        const del = await this.f.$('.se-cell-context-menu-button.se-context-menu-button-delete');
+        if (!del) throw new Error('표 줄이기: 삭제 단추 없음');
+        await del.evaluate(x => x.click()); await pause(700);
+      }
+      const cur = await count();
+      if (cur[k] !== want[k]) throw new Error(`표 ${axis === 'row' ? '행' : '열'} 수 맞추기 실패: ${cur[k]} / 원고 ${want[k]}`);
+    }
+    for (let r = 0; r < rows.length; r++) for (let c = 0; c < rows[r].length; c++) {
+      const tr = (await (await tbl()).$$('tr'))[r];
+      const td = (await tr.$$('td'))[c];
+      const p = await td.$('.se-text-paragraph');
+      await (p || td).evaluate(x => x.scrollIntoView({ block: 'center' })); await pause(150);
+      await (p || td).click(); await pause(250);
+      await this.style({ size: 'fs15', bold: r === 0, align: 'center' });
+      const txt = plainText(rows[r][c]);
+      if (txt) await human(this.page, txt);
+      if (r === 0) { const on = await this.isActive('.se-bold-toolbar-button'); if (on) await this.click('.se-bold-toolbar-button'); }
+      await pause(200);
+    }
+    await this.page.keyboard.press('Escape').catch(() => { }); await pause(300);
+    // 표가 마지막 칸이면 '본문 추가' 영역을 DOM 클릭해선 안 생기고 실제 마우스 클릭이어야 생긴다 (probe_table3)
+    // 표 바로 뒤에 이미 본문 칸이 있으면(표가 중간에 들어간 경우) 그 칸으로 커서를 옮긴다
+    const nextP = (await (await tbl()).evaluateHandle(t => { const n = t.nextElementSibling; return n && n.classList.contains('se-text') ? n.querySelector('.se-text-paragraph') : null; })).asElement();
+    if (nextP) { await nextP.evaluate(x => x.scrollIntoView({ block: 'center' })); await pause(200); await nextP.click(); await pause(400); return; }
+    const comps = () => this.f.$$eval('.se-content .se-component', a => a.length);
+    const before = await comps();
+    const bottom = await this.f.$('.se-canvas-bottom-button');
+    if (bottom) { await bottom.evaluate(b => b.scrollIntoView({ block: 'center' })); await pause(300); await bottom.click(); await pause(700); }
+    const lastIsText = await this.f.$$eval('.se-content .se-component', a => a[a.length - 1].classList.contains('se-text'));
+    if (await comps() <= before || !lastIsText) throw new Error('표 뒤 본문 칸을 만들지 못했습니다');
+    const p = await this.f.$$('.se-content .se-component:last-child .se-text-paragraph');
+    await p[p.length - 1].click(); await pause(400);
+  }
+
   // 블로그 링크 카드
   //   1) 툴바 링크 단추 → 팝업에 주소 → 확인 (예전 방식. 2026-11-02 현재 편집기에서 팝업이 열리지 않는다)
   //   2) 안 열리면: 마지막 본문 끝에 새 줄을 만들고 주소를 친 뒤 Enter → 편집기가 링크 카드로 자동 변환 → 남은 주소 글자 줄만 지운다
@@ -362,4 +419,4 @@ class Editor {
   }
 }
 
-module.exports = { Editor, human, strokes, releaseMods, tokens };
+module.exports = { Editor, human, strokes, releaseMods, tokens, plainText };

@@ -967,3 +967,36 @@ html:not([data-scale="m"]) #side{top:52px;height:calc(100vh / var(--z,1) - 52px)
 .hid-item img{width:96px;height:96px;object-fit:cover;border-radius:6px;flex:none;background:var(--s3)}
 .hid-body{display:flex;flex-direction:column;gap:6px;min-width:0;flex:1}
 .hid-body .inp{height:30px;font-size:12.5px}
+
+.side-nav .side-grp{padding:14px 20px 6px;counter-increment:none}
+.side-nav .side-grp:first-child{padding-top:2px}
+/* 원고 흐름 화면(G2·발행 대기·추천 키워드) */
+.flow-find td{font-size:13px}
+.flow-why{margin:0;padding-left:18px;color:var(--text2);font-size:12.5px;line-height:1.55}
+.flow-why li+li{margin-top:2px}
+
+/* 다음 글 설계 (최근 올린 글 · 피해야 할 것 · 다음 글은 이렇게) */
+.fp-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 28px}
+.fp-grid section{min-width:0}
+.fp-grid h4{margin:0 0 8px;font-size:12.5px;font-weight:600;color:var(--text2)}
+.fp-list{list-style:none;margin:0 0 10px;padding:0}
+.fp-list li{padding:7px 0;border-bottom:1px solid var(--line-sub);font-size:12.5px;line-height:1.5;color:var(--text)}
+.fp-list li:first-child{padding-top:0}
+.fp-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-m{color:var(--text3);font-size:12px;line-height:1.5}
+.fp-sub{margin:6px 0 2px;font-size:12px;font-weight:600;color:var(--text2)}
+@media (max-width:900px){.fp-grid{grid-template-columns:1fr;gap:14px}}
+
+/* 사이드바: 서비스 이름 아래 로그인 정보 (2026-11-06) */
+.side-user{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin-top:12px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--pri-tint);color:var(--text)}
+.side-user-k{font:500 10px/1 var(--mono);letter-spacing:.12em;color:var(--pri);text-transform:uppercase}
+.side-user b{font-size:13px;font-weight:700;color:var(--text)}
+.side-user em{flex-basis:100%;font-style:normal;font-size:11.5px;color:var(--text3);overflow-wrap:anywhere}
+.side-user em:empty{display:none}
+
+/* 섹션 번호: 페이지 안의 섹션(panel)마다 제목 앞에 네모 번호 1, 2, 3 … 를 붙이고 섹션 사이를 벌린다 (2026-11-06) */
+.stack{counter-reset:sec}
+.stack>.panel>.panel-h>:is(b,h2,h3):first-child::before{counter-increment:sec;content:counter(sec);display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;margin-right:9px;border-radius:5px;background:var(--pri);color:#fff;font:700 12px/1 var(--mono);vertical-align:1px}
+.stack>.panel>.panel-h>:is(b,h2,h3):first-child{font-size:15px}
+.stack>.panel+.panel{margin-top:26px}
+.stack>.panel{border-top:2px solid var(--line)}

@@ -206,6 +206,7 @@ function planDraft(input = {}, profile = {}, { history = [], rand = Math.random 
     imageStyle, styleMode, styleCandidates, deco, length, variant, recentTitles,
     charTarget, charBasis, tone, kwRepeat, emphasis, titleMode, fixedTitle, qaCount, subKeywords, imageNotes,
     preset: input.preset ? String(input.preset) : null,
+    formBrief: String(input.formBrief || '').trim().slice(0, 3000),   // 다음 글 설계(quality\formplan_blog.js) — 최근 글과 다른 형태로
   };
 }
 
@@ -373,6 +374,7 @@ ${categoryBlock}`;
     `- 사진: ${P.imageCount}장 (${P.imageMode === 'cards' ? '전부 글자 카드' : P.imageMode === 'clinical' ? `임상 사진 ${P.imageCount}장, 카드 없음` : `${P.imageMode === 'photos' ? '내 사진' : 'AI'} ${new Set(P.aiIndexes).size}장 + 카드 ${cardCount}장`})${H.length ? ` + 고정 이미지 ${H.length}장(${H.map(hidden.describe).join(', ')})` : ''}`,
     P.imageMode === 'clinical' && P.clinical && P.clinical.field ? `- 진료 분야: ${P.clinical.field}` : '',
     P.recentTitles.length ? `- 이 블로그 최근 글 제목(제목·도입 문장이 비슷해지지 않게):\n${P.recentTitles.map(t => `  · ${t}`).join('\n')}` : '',
+    P.formBrief ? `\n# 최근 글과 다른 형태로 쓸 것\n이 블로그 최근 글이 같은 형태(제목 틀·도입·소제목·강조·사진 위치·끝맺음)로 반복되어 검색에서 빠졌다. 아래 설계를 따른다. 위 레이아웃·분량·사진 조건과 부딪치면 그 조건을 지키고, 나머지 형태는 이 설계에 맞춘다.\n${P.formBrief}` : '',
   ].filter(Boolean).join('\n');
   return { system, user };
 }

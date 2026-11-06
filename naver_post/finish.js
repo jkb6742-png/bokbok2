@@ -1,6 +1,8 @@
-// 발행 설정(카테고리·태그) → 전수검사 → (통과 + PUBLISH=1이면) 발행
-// write.js 마지막 단계. 단독 실행: 이미 입력된 글쓰기 탭에서 태그만 다시 넣고 검사·발행
-//   PUBLISH=1 node finish.js ../원고데이터/05_NF_layout.js
+// 발행 설정(카테고리·태그) → 전수검사 → (통과 + PUBLISH=1 + ALLOW_AUTO_PUBLISH=1이면) 발행
+// write.js 마지막 단계. 단독 실행: 이미 입력된 글쓰기 탭에서 태그만 다시 넣고 검사(·발행)
+//   node finish.js ../원고데이터/05_NF_layout.js
+// 자동 발행은 운영 결정으로 꺼져 있다(2026-11-05). PUBLISH=1만으로는 발행하지 않고 ALLOW_AUTO_PUBLISH=1이 함께 있어야 한다.
+// SAVE 모드(opts.mode==='SAVE' 또는 SAVE=1)에서는 발행 단추에 절대 접근하지 않고, 검사 뒤 발행 설정 창을 Escape로 닫기만 한다.
 const path = require('path'), fs = require('fs');
 const { sleep, pause, BLOG_ID } = require('./common');
 const { releaseMods } = require('./editor');
@@ -34,7 +36,12 @@ async function setTags(page, f, tags) {
   }
 }
 
-async function finish(page, f, S, reportName) {
+// 자동 발행 허용 여부: PUBLISH=1 + ALLOW_AUTO_PUBLISH=1 둘 다 있고 SAVE 모드가 아닐 때만
+const autoPublishAllowed = (mode) => !!process.env.PUBLISH && process.env.ALLOW_AUTO_PUBLISH === '1' && mode !== 'SAVE' && !process.env.SAVE;
+const PUBLISH_REFUSED_MSG = '자동 발행은 운영 결정으로 꺼져 있습니다. PUBLISH=1만으로는 발행하지 않습니다 (꼭 필요하면 ALLOW_AUTO_PUBLISH=1을 함께 지정). 임시저장은 SAVE=1을 쓰세요.';
+
+async function finish(page, f, S, reportName, runOpts = {}) {
+  const mode = runOpts.mode || (process.env.SAVE ? 'SAVE' : 'STOP');
   // 발행 설정 창 열기 (이미 열려 있으면 그대로)
   if (!await f.$('#tag-input')) {
     // 발행 버튼: 열린 메뉴·레이어가 있으면 Escape로 닫고, 셀렉터 두 가지로 최대 4번 찾는다
@@ -61,7 +68,15 @@ async function finish(page, f, S, reportName) {
   }
   if (!catOk) { console.log(`카테고리 '${S.category}'가 이 블로그에 없음 (보이는 목록: ${seen.join(' / ') || '없음'})`); await page.keyboard.press('Escape'); }
   await pause(800);
-  await setTags(page, f, S.tags);
+  // 사용자 지시(2026-11-05): 태그 칸에 이미 떠 있는 태그(본문 해시태그에서 자동으로 채워진 것)는 지우고 다시 치지 않고 그대로 쓴다.
+  //   칸이 비어 있을 때만 원고 태그를 입력한다. 전수검사도 칸에 있는 태그 기준으로 본다. 예전 방식은 TAG_RETYPE=1
+  const shown = await tagList(f).catch(() => []);
+  if (shown.length && process.env.TAG_RETYPE !== '1') {
+    console.log(`태그 칸에 이미 있는 태그 ${shown.length}개를 그대로 씀 (지우고 다시 입력 안 함)`);
+    S.tags = shown;
+  } else {
+    await setTags(page, f, S.tags);
+  }
 
   console.log('@@진행 전수검사 중');
   const r = await inspect(f, S);
@@ -77,7 +92,14 @@ async function finish(page, f, S, reportName) {
   const okToPublish = r.pass || (hardFails.length === 0 && r.fails.length > 0);
   if (!r.pass && okToPublish) console.log('  (해시태그 항목만 실패 → 발행 진행)');
   let published = null;
-  if (okToPublish && process.env.PUBLISH) {
+  if (mode === 'SAVE') {
+    // 발행 설정 창은 Escape로만 닫는다 (발행·확인 단추는 건드리지 않음). 카테고리·태그 값은 편집기에 남는다.
+    for (let t = 0; t < 3 && await f.$('#tag-input').then(x => x && x.boundingBox()).catch(() => null); t++) { await page.keyboard.press('Escape').catch(() => { }); await pause(800); }
+    console.log(r.pass ? '전수검사 통과 → 임시저장 단계로' : '전수검사 실패 → 저장하지 않고 멈춤 (편집기는 그대로 둠)');
+    return { ...r, published: null, report: out };
+  }
+  if (process.env.PUBLISH && !autoPublishAllowed(mode)) console.log(PUBLISH_REFUSED_MSG);
+  if (okToPublish && autoPublishAllowed(mode)) {
     const btn = await f.evaluateHandle(() => [...document.querySelectorAll('button')].find(b => /confirm_btn/.test(b.className) && b.innerText.includes('발행')));
     if (btn.asElement()) {
       await btn.asElement().click();
@@ -95,7 +117,7 @@ async function finish(page, f, S, reportName) {
   return { ...r, published };
 }
 
-module.exports = { finish, setTags, tagList };
+module.exports = { finish, setTags, tagList, autoPublishAllowed, PUBLISH_REFUSED_MSG };
 
 if (require.main === module) (async () => {
   const S = require('./manuscript').load(process.argv[2]);

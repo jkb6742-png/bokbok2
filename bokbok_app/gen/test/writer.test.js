@@ -200,3 +200,13 @@ test('write: imageStyle auto → 후보 안에서 모델 선택 반영, 후보 �
   const d2 = await writer.write({ apiKey: 'k-123456', input: { ...INPUT, imageStyle: 'auto' }, profile: PROFILE, history, rand: () => 0 });
   assert.ok(!['photo', 'character', 'flat'].includes(d2.imageStyle), d2.imageStyle);
 });
+
+test('buildMessages: 다음 글 설계(formBrief)가 있으면 "최근 글과 다른 형태로" 절로 들어가고, 없으면 빠진다', () => {
+  const brief = '최근 5편 형태 분석 → 다음 글 설계\n· 제목: 물음표로 끝나는 질문';
+  const P = plan({ ...INPUT, formBrief: brief });
+  const { user } = writer.buildMessages(INPUT, PROFILE, P);
+  assert.match(user, /# 최근 글과 다른 형태로 쓸 것/);
+  assert.ok(user.includes('· 제목: 물음표로 끝나는 질문'));
+  const { user: u2 } = writer.buildMessages(INPUT, PROFILE, plan(INPUT));
+  assert.doesNotMatch(u2, /최근 글과 다른 형태로/);
+});

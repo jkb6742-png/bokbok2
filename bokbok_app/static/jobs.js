@@ -9,7 +9,7 @@
   var dur = function (a, b) { if (!a) return ''; var s = Math.max(0, Math.round(((b || Date.now()) - a) / 1000)); return s < 60 ? s + '초' : s < 3600 ? Math.floor(s / 60) + '분 ' + pad(s % 60) + '초' : Math.floor(s / 3600) + '시간 ' + Math.floor(s % 3600 / 60) + '분'; };
   var KIND = { publish: ['블로그 발행', 'BLOG'], generate: ['GPT 원고', 'GPT'], channel: ['채널 발행', 'SNS'] };
   var ST = { queued: ['대기', 'none'], running: ['진행 중', 'info'], done: ['완료', 'ok'], failed: ['실패', 'bad'], cancelled: ['취소', 'warn'] };
-  var MODE = { test: '시험', check: '검사만', publish: '발행' };
+  var MODE = { test: '시험', check: '검사만', publish: '발행(이전 방식)', save: '임시저장', stop: '입력 후 멈춤', manual: '직접 입력' };
 
   var Qd = { items: [], summary: { queued: 0, running: 0, done: 0, failed: 0 }, state: {}, logs: {} };   // logs: lane -> [줄]
   var subs = [];

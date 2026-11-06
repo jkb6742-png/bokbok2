@@ -1,0 +1,28 @@
+/* 병원 블로그 지수(clinic.js) */
+.cl-frame-wrap{position:relative;margin:-8px -8px 0;height:calc(100vh - 120px);min-height:560px}
+.cl-frame{display:block;width:100%;height:100%;border:0;background:var(--canvas)}
+.cl-loading{position:absolute;inset:0;display:grid;place-items:center;color:var(--text3);font-size:13px}
+.cl-pick{display:grid;gap:6px}
+.cl-pick span{font:500 10px/1 var(--mono);letter-spacing:.12em;color:var(--text3);text-transform:uppercase}
+.cl-pick select{width:100%;height:34px;background:var(--field);border:1px solid var(--line);border-radius:var(--r);padding:0 8px;font-size:13px}
+.cl-meta{margin-top:6px;font-size:12px;color:var(--text3)}
+.cl-h2{font-size:15px;font-weight:700;margin:0 0 12px}.cl-h2 em{font-style:normal;color:var(--text3);font-weight:500;margin-left:4px}
+.cl-t{width:100%;border-collapse:collapse;font-size:13.5px}
+.cl-t th{text-align:left;font-weight:600;color:var(--text3);font-size:12px;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.cl-t td{padding:10px;border-bottom:1px solid var(--line-sub);vertical-align:middle}
+.cl-t td.act{text-align:right;white-space:nowrap}
+.cl-t .mono{font-family:var(--mono);font-size:12.5px;color:var(--text2)}
+.cl-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 16px;max-width:900px}
+.cl-form label{display:grid;gap:6px}
+.cl-form label span{font-size:12px;color:var(--text3)}
+.cl-form input,.cl-form select{height:36px;background:var(--field);border:1px solid var(--line);border-radius:var(--r);padding:0 10px}
+.cl-fa{grid-column:1/-1;display:flex;align-items:center;gap:12px}
+.cl-msg .ok{color:var(--ok)}.cl-msg .bad{color:var(--bad)}
+.cl-acc{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 14px;font-size:12.5px;color:var(--text3)}
+.cl-acc .chip{height:28px;padding:0 10px;border:1px solid var(--line);background:var(--s2);border-radius:var(--r);cursor:pointer;font-size:12.5px}
+.cl-term{border:1px solid var(--line);border-radius:var(--r);background:var(--log-bg);margin-top:16px}
+.cl-term pre{margin:0;padding:14px 16px;height:calc(100vh - 340px);min-height:300px;overflow:auto;font:12.5px/1.6 var(--mono);color:var(--log-ink);white-space:pre-wrap}
+.cl-term form{display:flex;align-items:center;gap:8px;border-top:1px solid var(--log-line);padding:8px 12px}
+.cl-term form span{font-family:var(--mono);color:var(--pri)}
+.cl-term input{flex:1;height:32px;background:transparent;border:0;outline:0;font:13px var(--mono);color:#e8e8e8}
+@media (max-width:760px){.cl-form{grid-template-columns:1fr}.cl-frame-wrap{margin:0;height:calc(100vh - 100px)}}

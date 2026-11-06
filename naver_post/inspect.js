@@ -23,7 +23,9 @@ async function inspect(f, S) {
         hl: [...p.querySelectorAll('span.se-highlight')].map(s => [clean(s.innerText), s.style.backgroundColor]),
       }));
       const style = ([...c.classList].find(x => x.startsWith('se-l-')) || 'se-l-default').slice(5);
-      return { type, style, ps, text: clean(c.innerText), ol: !!c.querySelector('ol, ul') };
+      const cells = type === 'table' ? [...c.querySelectorAll('tr')].map(tr => [...tr.querySelectorAll('td')].map(td => ({ t: clean(td.innerText), b: [...td.querySelectorAll('b')].map(x => clean(x.innerText)).join(''), center: !!td.querySelector('.se-text-paragraph-align-center') }))) : null;
+      const tcenter = type === 'table' ? !!c.querySelector('.se-section-align-center') : null;
+      return { type, style, ps, text: type === 'table' ? '' : clean(c.innerText), ol: type !== 'table' && !!c.querySelector('ol, ul'), cells, tcenter };
     });
     const title = clean(document.querySelector('.se-title-text')?.innerText || '');
     const cat = document.querySelector('button[class^="selectbox_button"]')?.innerText.trim().split(String.fromCharCode(10)).pop();
@@ -38,12 +40,13 @@ async function inspect(f, S) {
 
   // 구성 순서
   const want = ['documentTitle'];
-  for (const b of S.blocks) want.push(b.quote ? 'quotation' : b.line ? 'horizontalLine' : b.img !== undefined ? 'image' : b.link ? 'oglink' : 'text');
+  for (const b of S.blocks) want.push(b.quote ? 'quotation' : b.line ? 'horizontalLine' : b.img !== undefined ? 'image' : b.link ? 'oglink' : b.table ? 'table' : 'text');
   const got = doc.comps.map(c => c.type);
   check('구성 순서', JSON.stringify(got) === JSON.stringify(want), `원고 ${want.length}칸 / 에디터 ${got.length}칸` + (JSON.stringify(got) === JSON.stringify(want) ? '' : ` · 에디터: ${got.join(' > ')}`));
 
   // 블록별 대조 (순서가 맞을 때 정확히, 아니면 같은 종류끼리 차례로)
   const byType = t => doc.comps.filter(c => c.type === t);
+  const tbs = byType('table'); let tbi = 0;
   const qs = byType('quotation'), ts = byType('text'), ims = byType('image'), hls = byType('horizontalLine');
   const ST = require('./styles');
   const qStyle = S.quoteStyle || 'default', lStyle = S.lineStyle || 'default';
@@ -56,6 +59,17 @@ async function inspect(f, S) {
       check(`${n}. 인용구`, t === b.quote, t);
       const want = b.style || qStyle;
       if (q) check(`${n}. 인용구 스타일`, q.style === want, q.style === want ? ST.quoteLabel(want) : `원고 ${ST.quoteLabel(want)} / 편집기 ${ST.quoteLabel(q.style)}(${q.style})`);
+    } else if (b.table) {
+      const t = tbs[tbi++];
+      if (!t) { check(`${n}. 표`, false, '에디터에 표 없음'); continue; }
+      const want = b.table.map(r => r.map(x => plain(x)));
+      const gotT = t.cells.map(r => r.map(x => x.t));
+      const okT = JSON.stringify(want) === JSON.stringify(gotT);
+      check(`${n}. 표 ${want.length}행×${want[0].length}열 글자 대조`, okT, okT ? '전 칸 일치' : `원고 ${JSON.stringify(want).slice(0, 80)} / 에디터 ${JSON.stringify(gotT).slice(0, 80)}`);
+      const badHead = t.cells[0] ? t.cells[0].filter((x, k) => x.t && x.b.replace(/s/g, '') !== x.t.replace(/s/g, '')).length : 1;
+      const badBody = t.cells.slice(1).flat().filter(x => x.b).length;
+      const offC = t.cells.flat().filter(x => x.t && !x.center).length;
+      check(`${n}. 표 서식(가운데·머리글 굵게)`, t.tcenter && !badHead && !badBody && !offC, `표 ${t.tcenter ? '가운데' : '가운데 아님'} · 머리글 굵게 아님 ${badHead} · 본문 굵게 ${badBody} · 칸 정렬 다름 ${offC}`);
     } else if (b.line) {
       const h = hls[li++]; const want = b.style || lStyle;
       if (h && h.style !== want) badLines.push(`${n}번째 칸 원고 ${ST.lineLabel(want)} / 편집기 ${ST.lineLabel(h.style)}(${h.style})`);

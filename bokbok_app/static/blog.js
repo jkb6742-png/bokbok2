@@ -5,8 +5,12 @@
   'use strict';
   if (!window.BB || typeof BB.mod !== 'function') return;
 
-  const MODE_TXT = { test: '시험 입력', stop: '입력 후 멈춤', publish: '검사 통과 시 발행' };
-  const MODE_LONG = { test: '시험 입력 (빠르게, 발행 안 함)', stop: '입력 후 멈춤 (검사까지)', publish: '검사 통과 시 발행' };
+  // 실행 방식 — 자동 발행은 꺼져 있다(2026-11-05). 기본은 임시저장(SAVE): 입력 → 전수검사 → 임시저장 확인까지, 발행은 사람이 직접
+  const MODE_TXT = { save: '임시저장', stop: '입력 후 멈춤', test: '시험 입력' };
+  const MODE_LONG = { save: '임시저장 (입력 · 전수검사 · 임시저장 확인, 발행 안 함)', stop: '입력 후 멈춤 (전수검사까지, 저장 안 함)', test: '시험 입력 (빠르게, 저장 안 함)' };
+  const HIST_MODE = Object.assign({ publish: '발행(이전 방식)', manual: '직접 입력 꾸러미' }, MODE_TXT);
+  const SAVE_OK = { SAVE_CONFIRMED: 1, MANUAL_PACKAGE_WRITTEN: 1 };
+  const CONF_TXT = { HIGH: '높음', MEDIUM: '보통', LOW: '낮음' };
   const FIELDS = [
     ['tpm', '타자 속도 (분당 타수)', 200, 2000, 50, v => v + '타'],
     ['jitter', '글자마다 흔들림', 0, 60, 5, v => '±' + v + '%'],
@@ -74,7 +78,7 @@
         // 지운 계정 기준으로 받은 상태면 고친 계정으로 한 번 더 받는다
         if (ask && acc) S = await BB.api('/api/state?blogId=' + encodeURIComponent(acc));
       }
-      if (!mode) mode = S.settings.mode;
+      if (!mode || !MODE_TXT[mode]) mode = MODE_TXT[S.settings.mode] ? S.settings.mode : 'save';
       fillSide();
       return S;
     }).finally(() => { pending = null; });
@@ -132,16 +136,34 @@
         <div class="row">
           <div class="grow" data-r="selTitle">원고를 고르세요</div>
           <div class="seg" data-r="modes">${Object.keys(MODE_TXT).map(m => `<button type="button" data-m="${m}">${MODE_TXT[m]}</button>`).join('')}</div>
-          <button type="button" class="btn pri" data-act="run" disabled>실행</button>
-          <button type="button" class="btn" data-act="queue" disabled title="지금 실행하지 않고 작업 큐 뒤에 붙입니다. 다른 블로그 작업이 끝나면 차례로 돌아갑니다">큐에 추가</button>
+          <button type="button" class="btn pri" data-act="run" disabled title="G2 품질검사 → 통과하면 입력·전수검사·임시저장(발행은 하지 않음)">실행</button>
+          <button type="button" class="btn" data-act="manual" disabled title="자동 입력 없이 원고 옆에 manual_package.txt(제목·블록별 본문·사진·태그)만 만들고 엽니다">직접 입력 모드</button>
+          <button type="button" class="btn" data-act="queue" disabled title="지금 실행하지 않고 작업 큐 뒤에 붙입니다. 차례가 되면 G2 검사를 거쳐 실행합니다">큐에 추가</button>
           <button type="button" class="btn" data-act="stop" hidden>중지</button>
         </div>
+        <div data-r="g2"></div>
         <div class="prog"><i data-r="prog"></i></div>
         <div class="sub" data-r="status">대기</div>
         <div class="log" data-r="log"></div>
       </div>`;
     const $ = r => root.querySelector(`[data-r="${r}"]`);
     const logEl = $('log');
+    let lastG2 = null;           // { file, mode, g2 }
+
+    function paintG2() {
+      const box = $('g2'); if (!box) return;
+      if (!lastG2 || lastG2.file !== sel) { box.innerHTML = ''; return; }
+      const g = lastG2.g2;
+      box.innerHTML = g2Html(g, { actions: g.verdict !== 'PASS' });
+    }
+    async function startRun(m, a, runMode, override) {
+      logEl.textContent = ''; setProg(''); lastPublished = '';
+      if (BB.jobs && BB.jobs.autoPip) BB.jobs.autoPip();
+      const r = await BB.api('/api/run', { blogId: a.blogId, file: m.file, mode: runMode, override: override || undefined });
+      if (r && r.g2 && lastG2) lastG2.g2 = r.g2;
+      $('status').textContent = runMode === 'manual' ? '직접 입력 꾸러미 만드는 중' : `실행 중 · ${MODE_TXT[runMode] || runMode} · 분당 ${S.settings.tpm}타${override ? ' · 운영자 예외(G2 건너뜀)' : ''}`;
+      reload();
+    }
 
     function setProg(p) {
       const bar = $('prog');
@@ -152,6 +174,14 @@
     function doneStatus(r) {
       r = r || { pass: false, fails: ['중단됨'] };
       lastPublished = r.published || '';
+      if (r.saveStatus) {
+        $('status').innerHTML = SAVE_OK[r.saveStatus]
+          ? (r.saveStatus === 'MANUAL_PACKAGE_WRITTEN'
+            ? `<span class="ok">직접 입력 꾸러미 작성</span> · <button type="button" class="link" data-act="openPkg" data-path="${esc(r.manualPackage || '')}">manual_package.txt 열기</button>`
+            : '<span class="ok">임시저장 확인</span> · 발행은 하지 않았습니다 · <button type="button" class="link" data-act="goPending">발행 대기로</button>')
+          : `<span class="bad">${esc(r.saveStatusText || r.saveStatus)}</span>${r.fails && r.fails[0] ? ` · <span class="muted">${esc(r.fails[0])}</span>` : ''}`;
+        return;
+      }
       $('status').innerHTML = r.published
         ? '<span class="ok">발행 완료</span> · <button type="button" class="link" data-act="openDone">글 열기</button>'
         : r.pass ? '<span class="ok">전수검사 통과</span> · 발행은 하지 않음'
@@ -166,6 +196,8 @@
       else if (last && last.pass === false) st = `<span class="bad">검사 실패</span><div class="muted mono">${esc((last.fails || [])[0] || '')}</div>`;
       else if (last && last.pass) st = `<span class="muted">검사 통과${last.published ? '' : ' · 미발행'}</span>`;
       else st = '<span class="muted">미발행</span>';
+      if (m.ok && !m.posted && m.save) st = SAVE_OK[m.save.status] ? '<span class="ok">' + esc(m.save.statusText) + '</span>' : '<span class="bad">' + esc(m.save.statusText) + '</span>';
+      if (m.g2) st += `<div class="muted">G2 ${esc(m.g2.override ? '운영자 예외' : m.g2.verdictText || '')}${m.g2.score != null && !m.g2.override ? ' · ' + esc(m.g2.score) + '점' : ''}${m.g2.stale ? ' · 원고 바뀜' : ''}</div>`;
       if (last && last.report) st += ` <button type="button" class="link" data-act="report" data-index="${i}">검사표</button>`;
       return st;
     }
@@ -214,6 +246,8 @@
       if (qBtn) qBtn.disabled = !(ms.find(x => x.file === sel) && ms.find(x => x.file === sel).ok !== false);
       runBtn.disabled = !cur || !cur.ok || running || !a;
       runBtn.hidden = running;
+      const manBtn = root.querySelector('[data-act="manual"]'); if (manBtn) { manBtn.disabled = runBtn.disabled; manBtn.hidden = running; }
+      paintG2();
       stopBtn.hidden = !running;
     }
 
@@ -258,17 +292,36 @@
         else if (act === 'goWrite') BB.go('#/blog/write');
         else if (act === 'preview') { e.stopPropagation(); const m = ms[i]; if (m && m.draft) BB.go('#/blog/write/' + m.draft.split('/').map(encodeURIComponent).join('/')); }
         else if (act === 'refresh') reload();
-        else if (act === 'run') {
+        else if (act === 'run' || act === 'manual') {
+          // 1) G2 품질검사 → 2) PASS 일 때만 실행(기본 SAVE: 임시저장까지, 발행 안 함)
           const m = ms.find(x => x.file === sel);
           if (!m || !a) return;
-          if (mode === 'publish' && !(await BB.confirm(`[${m.title}]\n${a.name} (${a.blogId}) 블로그에 입력하고, 전수검사를 모두 통과하면 발행합니다.${m.draft && !m.reviewed ? '\n\n⚠ 아직 검토 전 원고입니다. [미리보기]에서 글과 사진을 확인한 뒤 발행하는 것을 권합니다.' : ''} 진행할까요?`))) return;
+          const runMode = act === 'manual' ? 'manual' : mode;
+          $('g2').innerHTML = '<div class="sub" style="margin-top:12px">G2 품질검사 중</div>';
+          let g;
+          try { g = (await BB.api('/api/flow/g2', { blogId: a.blogId, file: m.file })).g2; } catch (err) { $('g2').innerHTML = ''; return; }
           if (!ctx.alive) return;
-          logEl.textContent = ''; setProg(''); lastPublished = '';
-          if (BB.jobs && BB.jobs.autoPip) BB.jobs.autoPip();   // 설정이 켜져 있으면 항상 위 미니창을 띄운다 (크롬이 글을 치는 동안 현황을 보게)
-          await BB.api('/api/run', { blogId: a.blogId, file: m.file, mode });
-          $('status').textContent = `실행 중 · ${MODE_TXT[mode]} · 분당 ${S.settings.tpm}타`;
-          reload();
+          lastG2 = { file: m.file, mode: runMode, g2: g };
+          paintG2();
+          if (g.verdict !== 'PASS') { $('status').innerHTML = `<span class="bad">G2 ${esc(g.verdictText)}</span> · 실행하지 않았습니다`; return; }
+          const msg = runMode === 'manual'
+            ? `[${m.title}]\n자동 입력 없이 원고 옆에 manual_package.txt 를 만들고 엽니다. 편집기에는 사람이 직접 입력합니다. 진행할까요?`
+            : runMode === 'save'
+              ? `[${m.title}]\n${a.name} (${a.blogId}) 블로그 편집기에 입력하고 전수검사를 모두 통과하면 임시저장까지만 합니다. 발행은 하지 않습니다. 진행할까요?${m.draft && !m.reviewed ? '\n\n아직 검토 전 원고입니다. [미리보기]에서 글과 사진을 확인하는 것을 권합니다.' : ''}`
+              : `[${m.title}]\n${MODE_LONG[runMode] || runMode} 로 실행합니다. 진행할까요?`;
+          if (!(await BB.confirm(msg)) || !ctx.alive) return;
+          await startRun(m, a, runMode, null);
         }
+        else if (act === 'g2open') { const m = ms.find(x => x.file === sel); if (m) openP(m.file); }
+        else if (act === 'g2override') {
+          const m = ms.find(x => x.file === sel);
+          if (!m || !a || !lastG2) return;
+          const reason = await askOverride(lastG2.g2, m);
+          if (!reason || !ctx.alive) return;
+          await startRun(m, a, lastG2.mode, { reason });
+        }
+        else if (act === 'openPkg') openP(t.dataset.path);
+        else if (act === 'goPending') BB.go('#/blog/pending');
         else if (act === 'queue') {
           const m = ms.find(x => x.file === sel);
           if (!m || !a) return;
@@ -284,7 +337,7 @@
       const { type, data } = ev;
       if (type === 'log') { logEl.textContent += (logEl.textContent ? '\n' : '') + data; logEl.scrollTop = logEl.scrollHeight; }
       else if (type === 'progress') setProg(data);
-      else if (type === 'done') { doneStatus(data); reload(); }
+      else if (type === 'done') { doneStatus(data); if (data && data.saveStatus === 'MANUAL_PACKAGE_WRITTEN' && data.manualPackage) openP(data.manualPackage); reload(); }
     };
     const off = typeof BB.onEvent === 'function' ? BB.onEvent(onEv) : null;
 
@@ -350,6 +403,7 @@
     root.innerHTML = `
       <div class="page-h"><h1>원고 만들기</h1><div class="sub" data-r="wsub"></div></div>
       <div data-r="nokey" hidden></div>
+      <div class="panel" data-r="nextp"></div>
       <div class="seg wtab" data-r="wtab">
         <button type="button" data-tab="auto">자동 원고<small>블로그 데이터로 주제 선정 → 원고까지 자동</small></button>
         <button type="button" data-tab="custom">직접 만들기<small>키워드·사진·임상 증례를 내가 정해서</small></button></div>
@@ -484,7 +538,7 @@
         </section>
         <section class="gs"><div class="gs-h"><span>03</span>이미지</div>
           ${row('이미지 방식', 'AI를 쓸지 말지', `${selOpt('imageMode', 'imageModes', ch.imageMode)}<div class="hint" data-d="imageMode">${esc(descOf('imageModes', ch.imageMode))}</div>`)}
-          ${ch.imageMode === 'clinical' ? row('진료 분야', '치과 증례', `<select class="inp" data-k="field"><option value="">선택</option>${(o.clinicalFields || []).map(f => `<option value="${esc(f)}"${ch.field === f ? ' selected' : ''}>${esc(f)}</option>`).join('')}</select>
+          ${ch.imageMode === 'clinical' ? row('진료 분야', esc((DEPTS || []).length && curAcc() ? (deptLabel(curAcc().dept) || '병원') + ' 증례' : '병원 증례'), `<select class="inp" data-k="field"><option value="">선택</option>${(((o.clinicalFieldsByDept || {})[(curAcc() || {}).dept]) || o.clinicalFields || []).map(f => `<option value="${esc(f)}"${ch.field === f ? ' selected' : ''}>${esc(f)}</option>`).join('')}</select>
             <div class="hint">${ch.field === '소아치과' ? '<b>소아 사진은 얼굴이 보이지 않게(입안만 남기고 코·턱·볼 블러) 올려 주세요.</b> ' : ''}환자 식별 정보 금지 · 효과 보장·과장 금지 · 부작용·주의사항 문단 필수 — 원고 검사에서 자동으로 막습니다.</div>`) : ''}
           ${ch.imageMode === 'clinical' ? row('글 형태', '3종을 돌아가며', `${selOpt('clinicalForm', 'clinicalForms', ch.clinicalForm || 'stage')}<div class="hint" data-d="clinicalForm">${esc(descOf('clinicalForms', ch.clinicalForm || 'stage'))}</div>`) : ''}
           ${ch.imageMode === 'clinical' ? row('증례 메모', '사실만 짧게', `<textarea class="inp" data-k="caseNote" rows="3" maxlength="1000" placeholder="예: 40대 남성, 하악 우측 제1대구치 상실 상태로 내원. 골이식 후 임플란트 식립, 3개월 뒤 보철 완료">${esc(ch.caseNote || '')}</textarea>
@@ -664,6 +718,7 @@
       paintChoices(); paintPresets(); paintGo(); paintAuto();
       // 주제 조회에서 [이 주제로 원고 만들기]로 넘어온 키워드
       const tk = lsGet('bb.topicKw'); if (tk) { lsSet('bb.topicKw', ''); const f0 = fp.querySelector('form'); if (f0 && f0.elements.keyword) { f0.elements.keyword.value = tk; wtab = 'custom'; lsSet('bb.writeTab', 'custom'); applyTab(); } }
+      const tb = lsGet('bb.topicBrief'); if (tb) { lsSet('bb.topicBrief', ''); const f1 = fp.querySelector('form'); if (f1 && f1.elements.notes) f1.elements.notes.value = tb.slice(0, 3000); }
       loadRefs().then(() => { if (ctx.alive && curAcc() && ch) paintChoices(); });
     }
     function paintGo() {
@@ -931,7 +986,7 @@
       if (jj && !jj.done && jj.kind === 'generate') {   // 진행 중인 작업만 이어서 보여 준다
         job = { ...jj, dir: jj.result && jj.result.dir, title: jj.result && jj.result.title };
       }
-      paintNoKey(); paintForm(); paintJob(); loadDrafts();
+      paintNoKey(); paintForm(); paintJob(); loadDrafts(); formPlanPanel($('nextp'), ctx);
     }).catch(() => { if (ctx.alive) $('formp').innerHTML = '<div class="empty">화면을 불러오지 못했습니다. 다시 열어 주세요.</div>'; });
 
     return () => { ctx.alive = false; if (typeof off === 'function') off(); };
@@ -1083,6 +1138,10 @@
   }
 
   // ── 블로그 계정 ───────────────────────────────────
+  let DEPTS = null;
+  const loadDepts = () => DEPTS ? Promise.resolve(DEPTS) : BB.api('/api/medical/depts').then(r => (DEPTS = r.depts || [])).catch(() => (DEPTS = []));
+  const deptLabel = k => ((DEPTS || []).find(d => d.key === k) || {}).label || '';
+  const deptOpts = cur => '<option value="">진료과 선택</option>' + (DEPTS || []).map(d => `<option value="${esc(d.key)}"${cur === d.key ? ' selected' : ''}>${esc(d.label)}</option>`).join('');
   function pageAccounts(root) {
     const ctx = { alive: true };
     root.innerHTML = `
@@ -1096,23 +1155,72 @@
           <div class="field"><label>이름</label><input class="inp" name="name" maxlength="40" placeholder="예: 디어스치과 블로그"></div>
           <div class="field"><label>블로그 아이디</label><input class="inp mono" name="blogId" required pattern="^[a-zA-Z0-9_\\-]{3,40}$" placeholder="예: jsrjkb6742">
             <div class="hint">blog.naver.com/ 뒤 부분 (영문·숫자·_·- 3~40자)</div></div>
+          <div class="field"><label>진료과</label><select class="inp" name="dept" required data-r="deptSel"><option value="">불러오는 중</option></select></div>
+          <div class="row"><div class="field grow"><label>시·군·구</label><input class="inp" name="sigungu" maxlength="20" placeholder="예: 안양시 동안구"></div>
+            <div class="field grow"><label>동·역(상권)</label><input class="inp" name="area" maxlength="30" placeholder="예: 평촌역"></div></div>
+          <div class="hint">병의원 블로그만 등록합니다. 진료과·지역은 병원 블로그 지수(지역별 현황·의료법 검수)와 원고 생성 기준이 됩니다. 일반 블로그는 관리자 CMD에서만 다룹니다.</div>
           <div class="row"><button type="submit" class="btn pri">추가</button></div>
         </form>
       </div>`;
     const $ = r => root.querySelector(`[data-r="${r}"]`);
+    let openSet = '';   // 입력 설정을 펼친 블로그
+    // 고정 IP는 [연결 → 고정 IP] 메뉴에서 등록·할당한다. 여기서는 보기만.
+    const ipLabel = a => { const x = (S.fixedIps || []).find(y => y.id === a.ipId); return (a.ipId ? (x ? `<span class="mono">${esc((x.label ? x.label + ' · ' : '') + x.ip)}</span>` : '<span class="bad">지워진 IP</span>') : '<span class="sub">없음</span>') + ` <button type="button" class="link" data-go="#/blog/ips">변경</button>`; };
+
+    // ── 블로그별 입력 설정: 기본값과 다른 항목만 저장, 나머지는 [입력 설정] 기본값 ──
+    function blogSetForm(a) {
+      const st = (S.blogSettings || {})[a.blogId] || S.defaults || {}, own = a.settings || {}, hasIp = !!a.ipId;
+      const mark = k => own[k] !== undefined ? ' <span class="tag">이 블로그</span>' : '';
+      return `<form class="form" data-bsform="${esc(a.blogId)}" autocomplete="off"><div class="panel-h"><b>입력 설정 · ${esc(a.name)}</b><span class="sub">이 블로그에만 적용됩니다. [이 블로그] 표시가 없는 항목은 [입력 설정] 기본값을 따릅니다</span></div>
+        <div class="row" style="gap:12px;align-items:flex-start">
+          <div class="field grow"><label>로그인 방식${hasIp ? '' : mark('loginMode')}</label><select class="inp" name="loginMode"${hasIp ? ' disabled' : ''}>
+            <option value="keep"${st.loginMode === 'keep' ? ' selected' : ''}>전용 크롬에 로그인 유지 (권장)</option>
+            <option value="fresh"${st.loginMode !== 'keep' ? ' selected' : ''}>매번 새 시크릿 창에서 직접 로그인</option></select>
+            <div class="hint">${hasIp ? '고정 IP가 할당돼 로그인 유지로 고정됩니다. 매번 새 창이면 IP가 같아도 네이버가 매번 새 기기로 봅니다.' : '같은 기기·같은 네트워크로 꾸준히 쓰는 쪽이 보호조치가 덜 걸립니다.'}</div></div>
+          <div class="field grow"><label>기본 실행 방식${mark('mode')}</label><select class="inp" name="mode">${Object.keys(MODE_LONG).map(m => `<option value="${m}"${st.mode === m ? ' selected' : ''}>${MODE_LONG[m]}</option>`).join('')}</select></div>
+        </div>
+        <div class="field"><label class="row" style="gap:8px;align-items:center"><input type="checkbox" name="clearCache"${st.clearCache === false ? '' : ' checked'}> 발행 뒤 캐시 비우기 (쿠키·로그인은 유지)${mark('clearCache')}</label></div>
+        ${FIELDS.map(([k, label, lo, hi, step, f]) => `<div class="field"><label>${label}${mark(k)}</label><div class="row"><input class="grow" type="range" name="${k}" min="${lo}" max="${hi}" step="${step}" value="${esc(st[k] ?? lo)}"><output class="mono" data-bso="${k}">${esc(f(st[k] ?? lo))}</output></div></div>`).join('')}
+        <div class="row"><button type="submit" class="btn pri">이 블로그에 저장</button><button type="button" class="btn" data-bsrec="1">권장값</button><button type="button" class="btn" data-bsreset="1">전부 기본값으로</button></div>
+      </form>`;
+    }
+    function bindBlogSet() {
+      const f = root.querySelector('[data-bsform]'); if (!f) return;
+      const a = S.accounts.find(x => x.blogId === f.dataset.bsform); if (!a) return;
+      FIELDS.forEach(([k, , , , , fmt]) => { const inp = f.elements[k], out = f.querySelector(`[data-bso="${k}"]`); inp.oninput = () => { out.textContent = fmt(+inp.value); }; });
+      const done = (r, msg) => { Object.assign(a, r.account); a.settings = r.account.settings; S.blogSettings = { ...(S.blogSettings || {}), [a.blogId]: r.settings }; BB.toast(msg); paint(); };
+      const D = S.defaults || {};
+      f.onsubmit = async e => {
+        e.preventDefault();
+        const v = { mode: f.elements.mode.value, clearCache: !!f.elements.clearCache.checked };
+        if (!a.ipId) v.loginMode = f.elements.loginMode.value;
+        FIELDS.forEach(([k]) => { v[k] = +f.elements[k].value; });
+        const diff = {}; for (const k in v) if (v[k] !== D[k]) diff[k] = v[k];
+        try { done(await BB.api('/api/accounts/settings', { blogId: a.blogId, settings: diff }), '이 블로그 입력 설정을 저장했습니다'); } catch (err) { }
+      };
+      f.querySelector('[data-bsrec]').onclick = async () => {   // 권장값: 로그인 유지 · 임시저장 실행, 나머지는 기본값
+        try { done(await BB.api('/api/accounts/settings', { blogId: a.blogId, settings: { loginMode: 'keep', mode: 'save' } }), '권장값을 적용했습니다 (로그인 유지 · 임시저장)'); } catch (err) { }
+      };
+      f.querySelector('[data-bsreset]').onclick = async () => {
+        try { done(await BB.api('/api/accounts/settings', { blogId: a.blogId, reset: true }), '이 블로그 설정을 기본값으로 되돌렸습니다'); } catch (err) { }
+      };
+    }
 
     function paint() {
       if (!ctx.alive || !S) return;
       const list = S.accounts;
-      $('list').innerHTML = list.length ? `<table class="tbl"><thead><tr><th>이름</th><th>아이디</th><th></th></tr></thead><tbody>
-        ${list.map((a, i) => `<tr${a.blogId === acc ? ' class="sel"' : ''}><td>${esc(a.name)}</td><td class="mono">${esc(a.blogId)}</td>
+      $('list').innerHTML = '<div class="panel-h"><b>블로그 목록</b><span class="sub">[입력 설정 ▾]을 누르면 그 블로그만의 설정이 펼쳐집니다. 고정 IP는 [고정 IP] 메뉴에서 바꿉니다</span></div>' + (list.length ? `<table class="tbl"><thead><tr><th>이름</th><th>아이디</th><th>구분</th><th>고정 IP</th><th></th></tr></thead><tbody>
+        ${list.map((a, i) => `<tr${a.blogId === acc ? ' class="sel"' : ''}><td>${esc(a.name)}</td><td class="mono">${esc(a.blogId)}</td><td>${a.kind === 'general' ? '<span class="tag">일반 · 관리자</span>' : esc(deptLabel(a.dept) || '진료과 미입력') + (a.region && (a.region.sigungu || a.region.area) ? ' <span class="sub">' + esc([a.region.sigungu, a.region.area].filter(Boolean).join(' ')) + '</span>' : '')}</td>
+          <td>${ipLabel(a)}</td>
           <td class="num"><div class="row">
+            <button type="button" class="btn sm${openSet === a.blogId ? ' pri' : ''}" data-act="bset" data-index="${i}">입력 설정 ${openSet === a.blogId ? '▴' : '▾'}</button>
             <button type="button" class="btn sm" data-act="prof" data-index="${i}">블로그 성격</button>
             <button type="button" class="btn sm" data-act="login" data-index="${i}">로그인 창 열기</button>
             <button type="button" class="btn sm" data-act="open" data-index="${i}">블로그 열기</button>
-            <button type="button" class="btn sm danger" data-act="del" data-index="${i}">삭제</button></div></td></tr>`).join('')}
-        </tbody></table>` : '<div class="empty">등록된 블로그 계정이 없습니다. 아래에서 추가하세요.</div>';
+            <button type="button" class="btn sm danger" data-act="del" data-index="${i}">삭제</button></div></td></tr>${openSet === a.blogId ? `<tr class="sel"><td colspan="5">${blogSetForm(a)}</td></tr>` : ''}`).join('')}
+        </tbody></table>` : '<div class="empty">등록된 블로그 계정이 없습니다. 아래에서 추가하세요.</div>');
       paintProfile();
+      bindBlogSet();
     }
     // 블로그 성격: GPT가 원고를 쓸 때 따르는 화자·독자·카테고리·규칙·대표 색 (선택한 계정)
     // 편집기 인용구·구분선 스타일(naver_post\styles.js 와 같은 키)
@@ -1125,6 +1233,9 @@
       const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '#0051c3';
       box.innerHTML = `<div class="panel-h"><b>블로그 성격 · ${esc(a.name)}</b><span class="sub">GPT가 원고를 쓸 때 이 내용을 따릅니다</span></div>
         <form class="form" data-r="pform" autocomplete="off">
+          ${a.kind === 'general' ? '<div class="hint">일반 블로그(관리자 전용)입니다. 병원으로 바꾸려면 관리자 CMD: account hospital …</div>' : `<div class="row"><div class="field"><label>진료과</label><select class="inp" name="dept">${deptOpts(a.dept)}</select></div>
+            <div class="field grow"><label>시·군·구</label><input class="inp" name="sigungu" maxlength="20" value="${esc((a.region || {}).sigungu || '')}"></div>
+            <div class="field grow"><label>동·역(상권)</label><input class="inp" name="area" maxlength="30" value="${esc((a.region || {}).area || '')}"></div></div>`}
           <div class="field"><label for="bb-p-persona">화자·말투</label><textarea class="inp" id="bb-p-persona" name="persona" rows="2" maxlength="300" placeholder="예: MBTI를 좋아하는 20대 직장인, 친구에게 말하듯 편한 존댓말">${esc(a.persona || '')}</textarea></div>
           <div class="field"><label for="bb-p-aud">독자</label><input class="inp" id="bb-p-aud" name="audience" maxlength="200" placeholder="예: MBTI에 관심 있는 20~30대" value="${esc(a.audience || '')}"></div>
           <div class="field"><label for="bb-p-cats">카테고리 목록</label><textarea class="inp" id="bb-p-cats" name="categories" rows="4" placeholder="한 줄에 하나">${esc((a.categories || []).join('\n'))}</textarea>
@@ -1159,12 +1270,12 @@
       f.addEventListener('submit', async e => {
         e.preventDefault();
         try {
-          const r = await BB.api('/api/accounts/profile', {
+          const r = await BB.api('/api/accounts/profile', Object.assign(f.elements.dept ? { dept: f.elements.dept.value || undefined, region: { sigungu: f.elements.sigungu.value.trim(), area: f.elements.area.value.trim() } } : {}, {
             blogId: a.blogId, persona: f.elements.persona.value, audience: f.elements.audience.value,
             categories: f.elements.categories.value.split('\n').map(x => x.trim()).filter(Boolean), rules: f.elements.rules.value, color: f.elements.color.value,
             homepage: f.elements.homepage.value.trim(), homepageLabel: f.elements.homepageLabel.value.trim(), linkInternal: +f.elements.linkInternal.value,
             quoteStyle: f.elements.quoteStyle.value, lineStyle: f.elements.lineStyle.value,
-          });
+          }));
           Object.assign(a, r.account);
           BB.toast('블로그 성격을 저장했습니다');
         } catch (err) { }
@@ -1230,6 +1341,7 @@
       if (!a) return;
       try {
         if (t.dataset.act === 'prof') { setAcc(a.blogId); fillSide(); paint(); $('prof').scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+        else if (t.dataset.act === 'bset') { openSet = openSet === a.blogId ? '' : a.blogId; paint(); }
         else if (t.dataset.act === 'login') {
           const credentials = await askNaverLogin(a);
           if (!credentials) return;
@@ -1258,7 +1370,9 @@
       const name = form.elements.name.value.trim(), blogId = form.elements.blogId.value.trim();
       if (!ID_RE.test(blogId)) return BB.toast('블로그 아이디는 blog.naver.com/ 뒤 부분(영문·숫자·_·- 3~40자)입니다');
       try {
-        await BB.api('/api/accounts', { name: name || blogId, blogId });
+        const dept = form.elements.dept.value;
+        if (!dept) return BB.toast('진료과를 골라 주세요');
+        await BB.api('/api/accounts', { name: name || blogId, blogId, dept, region: { sigungu: form.elements.sigungu.value.trim(), area: form.elements.area.value.trim() } });
         setAcc(blogId); sel = null;
         form.reset();
         BB.toast('계정을 추가했습니다. [로그인 창 열기]로 한 번 로그인하세요.');
@@ -1266,6 +1380,7 @@
       } catch (err) { }
     });
 
+    loadDepts().then(() => { const d = $('deptSel'); if (d) d.innerHTML = deptOpts(''); paint(); });
     loadState().then(paint).catch(() => { });
     return () => { ctx.alive = false; };
   }
@@ -1422,6 +1537,7 @@
 
   // ── 발행 기록 ─────────────────────────────────────
   function resultCell(h) {
+    if (h.saveStatus) return SAVE_OK[h.saveStatus] ? `<span class="ok">${esc(h.saveStatusText || h.saveStatus)}</span>` : `<span class="bad">${esc(h.saveStatusText || h.saveStatus)}</span>${h.fails && h.fails[0] ? `<div class="muted mono">${esc(h.fails[0])}</div>` : ''}`;
     if (h.published) return '<span class="ok">발행</span>';
     if (h.pass) return '<span class="ok">통과</span><span class="muted"> · 미발행</span>';
     if (h.fails && h.fails.length) return `<span class="bad">실패 ${h.fails.length}건</span><div class="muted mono">${esc(h.fails[0])}</div>`;
@@ -1431,7 +1547,7 @@
     const ctx = { alive: true };
     let items = [];
     root.innerHTML = `
-      <div class="page-h"><h1>발행 기록</h1><div class="sub">실행할 때마다 결과가 쌓입니다. 최근 것부터 보여 줍니다.</div></div>
+      <div class="page-h"><h1>실행 기록</h1><div class="sub">실행할 때마다 결과(임시저장 확인·전수검사)가 쌓입니다. 최근 것부터 보여 줍니다.</div></div>
       <div class="row"><label class="row"><input type="checkbox" data-r="all"${histAll ? ' checked' : ''}> 모든 계정</label>
         <div class="grow"></div><button type="button" class="btn" data-act="refresh">새로고침</button></div>
       <div class="panel" data-r="list"><div class="empty">불러오는 중</div></div>`;
@@ -1444,7 +1560,7 @@
         ${items.map((h, i) => `<tr><td class="mono">${esc(fmtAt(h.at))}</td>
           <td>${esc(accName(h.blogId))}<div class="muted mono">${esc(h.blogId)}</div></td>
           <td class="mono">${esc(fname(h.file))}</td>
-          <td>${esc(MODE_TXT[h.mode] || h.mode || '')}</td>
+          <td>${esc(HIST_MODE[h.mode] || h.mode || '')}${h.override ? '<div class="muted">운영자 예외</div>' : ''}</td>
           <td>${resultCell(h)}</td>
           <td class="num">${h.report ? `<button type="button" class="link" data-act="report" data-index="${i}">검사표</button>` : ''}
             ${h.published ? ` <button type="button" class="link" data-act="post" data-index="${i}">글 열기</button>` : ''}
@@ -1479,11 +1595,91 @@
     return () => { ctx.alive = false; };
   }
 
+  // ── 고정 IP: 대표 아이디(회원)별 IP 목록 + 블로그마다 할당. IP 하나는 블로그 S.ipMaxBlogs(2)개까지 ──
+  function pageIps(root) {
+    const ctx = { alive: true };
+    root.innerHTML = `
+      <div class="page-h"><h1>고정 IP</h1>
+        <div class="sub">블로그마다 정해진 인터넷 출입구(고정 IP 프록시)를 붙입니다. 할당된 블로그는 bokbok이 여는 전용 크롬만 그 IP로 나가고, 네이버를 열기 전과 발행 설정 직전에 실제 IP를 확인해 다르면 멈춥니다.</div></div>
+      <div class="panel" data-r="assign"><div class="empty">불러오는 중</div></div>
+      <div class="panel" data-r="ips"></div>
+      <div class="panel"><div class="panel-h"><b>쓰는 순서</b></div>
+        <ol class="hint" style="line-height:1.9;padding-left:18px;margin:0">
+          <li>업체에서 고정 IP 프록시를 삽니다. 먼저 무료 테스트로 네이버 로그인이 되는지 확인하세요.</li>
+          <li>아래 [내 고정 IP]에 이름·프록시 주소:포트(업체가 준 값)·출구 IP(보통 프록시 IP와 같음)를 넣고 저장합니다.</li>
+          <li>위 [블로그별 고정 IP]에서 블로그마다 IP를 고릅니다. 고르는 즉시 저장되고, 로그인 방식은 "전용 크롬에 로그인 유지"로 고정됩니다.</li>
+          <li>[블로그 계정 → 로그인 창 열기]로 한 번 직접 로그인합니다. 새 IP라 네이버가 본인 확인을 요구하면 계정 주인이 진행합니다.</li>
+          <li>이후 그 블로그는 꼭 bokbok에서 창을 엽니다. 평소 크롬으로 로그인하면 내 인터넷 IP로 접속하게 됩니다.</li>
+          <li>출구 IP가 다르다고 멈추면 안내에 나온 실제 IP로 [출구 IP]를 고쳐 넣습니다.</li>
+        </ol></div>`;
+    const $ = r => root.querySelector(`[data-r="${r}"]`);
+    const ipMax = () => S.ipMaxBlogs || 2;
+    function ipSelect(a, i) {
+      const ips = S.fixedIps || [];
+      const lost = a.ipId && !ips.some(x => x.id === a.ipId);
+      return `<select class="inp" data-ipsel="${i}" style="min-width:220px"><option value="">할당 안 함 (이 PC 인터넷)</option>${ips.map(x => {
+        const others = (x.used || []).filter(id => id !== a.blogId), full = others.length >= ipMax();
+        return `<option value="${esc(x.id)}"${a.ipId === x.id ? ' selected' : ''}${full ? ' disabled' : ''}>${esc((x.label ? x.label + ' · ' : '') + x.ip)} (${(x.used || []).length}/${ipMax()})${full ? ' 가득 참' : ''}</option>`;
+      }).join('')}${lost ? '<option value="" selected>지워진 IP · 다시 고르세요</option>' : ''}</select>`;
+    }
+    function paintAssign() {
+      const list = S.accounts || [];
+      $('assign').innerHTML = `<div class="panel-h"><b>블로그별 고정 IP</b><span class="sub">IP 하나는 블로그 ${ipMax()}개까지. 4개 블로그를 서로 다른 IP로 쓰려면 IP도 4개가 필요합니다</span></div>
+        ${list.length ? `<table class="tbl"><thead><tr><th>블로그</th><th>아이디</th><th>고정 IP</th><th>로그인 방식</th></tr></thead><tbody>
+        ${list.map((a, i) => `<tr><td>${esc(a.name)}</td><td class="mono">${esc(a.blogId)}</td><td>${ipSelect(a, i)}</td>
+          <td>${a.ipId ? '전용 크롬에 로그인 유지 <span class="sub">(고정)</span>' : esc(((S.blogSettings || {})[a.blogId] || {}).loginMode === 'keep' ? '전용 크롬에 로그인 유지' : '매번 새 시크릿 창')}</td></tr>`).join('')}
+        </tbody></table>` : '<div class="empty">등록된 블로그가 없습니다. [블로그 계정]에서 먼저 추가하세요.</div>'}`;
+    }
+    function paintIps() {
+      const box = $('ips');
+      let rows = (S.fixedIps || []).map(x => ({ ...x }));
+      const draw = () => {
+        box.innerHTML = `<div class="panel-h"><b>내 고정 IP</b><span class="sub">이 대표 아이디에서만 보이고 쓸 수 있습니다</span></div>
+          <form class="form" autocomplete="off">
+            <table class="tbl"><thead><tr><th>이름</th><th>프록시 주소:포트</th><th>출구 IP</th><th>쓰는 블로그</th><th></th></tr></thead><tbody>
+            ${rows.map((r, i) => `<tr data-i="${i}"><td><input class="inp" name="label" maxlength="30" placeholder="예: 이고고 1" value="${esc(r.label || '')}"></td>
+              <td><input class="inp mono" name="proxy" maxlength="120" placeholder="예: 1.2.3.4:8080" value="${esc((r.proxy || '').replace(/^http:[/][/]/, ''))}"></td>
+              <td><input class="inp mono" name="ip" maxlength="15" placeholder="예: 1.2.3.4" value="${esc(r.ip || '')}"></td>
+              <td>${esc((r.used || []).join(', ') || '없음')} <span class="sub">(${(r.used || []).length}/${ipMax()})</span></td>
+              <td><button type="button" class="btn sm danger" data-ipdel="${i}">삭제</button></td></tr>`).join('') || '<tr><td colspan="5" class="hint">등록된 고정 IP가 없습니다. [+ 고정 IP 추가]로 넣으세요.</td></tr>'}
+            </tbody></table>
+            <div class="hint">이름: 알아보기 쉬운 이름(직접 정함) · 프록시 주소:포트: 업체가 준 IP:포트 그대로(SOCKS5면 socks5://주소:포트) · 출구 IP: 네이버에 보이는 IP, 보통 프록시 주소의 IP와 같습니다.
+              아이디·비밀번호가 필요한 프록시는 아직 지원하지 않습니다.</div>
+            <div class="row"><button type="button" class="btn" data-ipadd="1">+ 고정 IP 추가</button><button type="submit" class="btn pri">저장</button></div>
+          </form>`;
+        const f = box.querySelector('form');
+        const pull = () => f.querySelectorAll('tr[data-i]').forEach(tr => { const r = rows[+tr.dataset.i]; ['label', 'proxy', 'ip'].forEach(k => { r[k] = tr.querySelector(`[name=${k}]`).value; }); });
+        f.querySelector('[data-ipadd]').onclick = () => { pull(); rows.push({ label: '', proxy: '', ip: '', used: [] }); draw(); };
+        f.querySelectorAll('[data-ipdel]').forEach(b => b.onclick = async () => {
+          pull(); const r = rows[+b.dataset.ipdel];
+          if ((r.used || []).length && !(await BB.confirm(`이 IP를 쓰는 블로그가 있습니다(${r.used.join(', ')}). 지우면 그 블로그는 IP를 다시 고를 때까지 실행이 막힙니다. 지울까요?`))) return;
+          rows.splice(+b.dataset.ipdel, 1); draw();
+        });
+        f.onsubmit = async e => {
+          e.preventDefault(); pull();
+          try { const r = await BB.api('/api/accounts/ips', { items: rows.filter(x => x.proxy.trim() || x.ip.trim()) }); S.fixedIps = r.fixedIps; BB.toast('고정 IP를 저장했습니다'); paint(); } catch (err) { }
+        };
+      };
+      draw();
+    }
+    function paint() { if (!ctx.alive || !S) return; paintAssign(); paintIps(); }
+    root.addEventListener('change', e => {
+      const t = e.target; if (!t.dataset || t.dataset.ipsel === undefined) return;
+      const a = S.accounts[+t.dataset.ipsel]; if (!a) return;
+      BB.api('/api/accounts/ip', { blogId: a.blogId, ipId: t.value }).then(r => {
+        Object.assign(a, r.account); S.fixedIps = r.fixedIps; S.blogSettings = { ...(S.blogSettings || {}), [a.blogId]: r.settings };
+        BB.toast(t.value ? '고정 IP를 할당했습니다. 처음 접속 때 네이버가 본인 확인을 한 번 요구할 수 있습니다' : '고정 IP 할당을 풀었습니다'); paint();
+      }).catch(() => { t.value = a.ipId || ''; });
+    });
+    loadState().then(paint).catch(() => { });
+    return () => { ctx.alive = false; };
+  }
+
   // ── 입력 설정 ─────────────────────────────────────
   function pageSettings(root) {
     const ctx = { alive: true };
     root.innerHTML = `
-      <div class="page-h"><h1>입력 설정</h1><div class="sub">모든 계정에 같이 적용됩니다.</div></div>
+      <div class="page-h"><h1>입력 설정</h1><div class="sub">모든 블로그의 기본값입니다. 블로그마다 다르게 하려면 [블로그 계정 → 입력 설정 ▾]에서 바꾸세요(바꾼 항목만 그 블로그에 적용).</div></div>
       <div class="panel" data-r="body"><div class="empty">불러오는 중</div></div>
       <div class="panel" id="bb-ai" data-r="ai"><div class="empty">불러오는 중</div></div>`;
     const body = root.querySelector('[data-r="body"]'), aiBox = root.querySelector('[data-r="ai"]');
@@ -1532,7 +1728,7 @@
 
     function paint() {
       if (!ctx.alive || !S) return;
-      const st = S.settings;
+      const st = S.defaults || S.settings;
       body.innerHTML = `<form class="form" autocomplete="off">
         ${FIELDS.map(([k, label, lo, hi, step, f, hint]) => `${FIELD_GROUPS[k] ? `<div class="panel-h"><b>${FIELD_GROUPS[k]}</b></div>` : ''}<div class="field"><label for="bb-s-${k}">${label}</label>
           <div class="row"><input class="grow" type="range" id="bb-s-${k}" name="${k}" min="${lo}" max="${hi}" step="${step}" value="${esc(st[k] ?? lo)}">
@@ -2376,14 +2572,365 @@
     return () => { ctx.alive = false; if (typeof off === 'function') off(); };
   }
 
-  const PAGES = { analyze: pageAnalyze, dash: pageDash, 'insight-settings': pageInsightSettings, write: pageWrite, posts: pagePosts, accounts: pageAccounts, history: pageHistory, neighbors: pageNeighbors, topics: pageTopics, settings: pageSettings };
+  // ── 원고 흐름 화면: 품질검사(G2) · 발행 대기 · 발행 완료 · 원고함 · 추천 키워드 큐 · LOGMETER ──
+  const accLabel = id => { const a = S && S.accounts.find(x => x.blogId === id); return a ? a.name : (id || ''); };
+  const verdictSpan = g => !g ? '<span class="muted">검사 전</span>' : g.override ? '<span class="bad">운영자 예외</span>'
+    : g.verdict === 'PASS' ? `<span class="ok">${esc(g.verdictText || '통과')}</span>` : g.verdict ? `<span class="bad">${esc(g.verdictText || g.verdict)}</span>` : `<span class="muted">${esc(g.verdictText || '검사 전')}</span>`;
+  // G2 결과 패널 (실행 영역·품질검사 화면 공용). actions: 판정이 PASS 가 아닐 때 [원고 열기][그래도 진행]
+  function g2Html(g, { actions = false, title = 'G2 품질검사' } = {}) {
+    if (!g) return '';
+    const f = (g.findings || []).filter(x => x.level !== 'INFO');
+    const info = (g.findings || []).filter(x => x.level === 'INFO');
+    return `<div class="panel-h" style="margin-top:14px"><b>${esc(title)}</b><span class="sub">${esc(fmtAt(g.checkedAt))}</span></div>
+      <div class="row" style="align-items:center">${verdictSpan(g)}<span class="sub">내부 점수 ${esc(g.score ?? '-')} · 비교 이력 ${esc(g.comparedCount || 0)}편${g.verdict === 'PASS' ? ' · 통과해야 실행할 수 있습니다' : ' · 이 판정으로는 실행하지 않습니다'}</span></div>
+      ${f.length ? `<table class="tbl flow-find" style="margin-top:8px"><thead><tr><th>수준</th><th>내용</th></tr></thead><tbody>
+        ${f.map(x => `<tr><td>${x.level === 'WARN' ? '<span class="muted">경고</span>' : `<span class="bad">${esc(x.levelText)}</span>`}</td><td>${esc(x.message)}<div class="muted mono">${esc(x.code)}</div></td></tr>`).join('')}</tbody></table>` : '<div class="sub" style="margin-top:8px">걸린 항목이 없습니다.</div>'}
+      ${info.length ? `<div class="sub" style="margin-top:8px">참고: ${info.map(x => esc(x.message)).join(' · ')}</div>` : ''}
+      ${(g.unknowns || []).length ? `<div class="sub" style="margin-top:6px">미확인(통과로 치지 않음): ${g.unknowns.map(x => esc(x.message)).join(' · ')}</div>` : ''}
+      ${actions ? `<div class="row" style="margin-top:12px"><button type="button" class="btn" data-act="g2open">원고 열기</button>
+        <button type="button" class="btn danger" data-act="g2override">그래도 진행(운영자 예외)</button>
+        <span class="sub">원고를 고친 뒤 [실행]을 다시 누르면 새로 검사합니다.</span></div>` : ''}`;
+  }
+  // 운영자 예외 확인: 이유를 적어야 진행. override.json 에 남고 실행 기록에도 표시된다
+  function askOverride(g, m) {
+    return new Promise(resolve => {
+      const dialog = document.createElement('dialog');
+      dialog.className = 'panel';
+      dialog.style.cssText = 'max-width:480px;width:calc(100% - 40px);padding:24px;color:var(--text);background:var(--surface-1,#101010)';
+      dialog.innerHTML = `<form autocomplete="off"><h2>운영자 예외로 진행</h2>
+        <p class="hint">G2 판정이 <b>${esc(g.verdictText || g.verdict)}</b>인 원고를 품질 승인 없이 입력합니다. 원고 옆 override.json 과 실행 기록에 이유·시각이 남고, quality.json 은 quality.overridden.json 으로 옮겨집니다. 발행은 여전히 하지 않습니다.</p>
+        <p class="hint mono">${esc(m.title || fname(m.file))}</p>
+        <div class="field"><label for="bb-ov-why">예외로 진행하는 이유</label><textarea class="inp" id="bb-ov-why" rows="3" maxlength="500" required placeholder="예: 시리즈 글이라 구성 반복은 의도된 것"></textarea></div>
+        <div class="row"><button class="btn danger" type="submit">예외로 진행</button><button class="btn" type="button" data-cancel>취소</button></div></form>`;
+      document.body.appendChild(dialog);
+      const why = dialog.querySelector('#bb-ov-why');
+      const finish = v => { dialog.close(); dialog.remove(); resolve(v); };
+      dialog.querySelector('form').addEventListener('submit', e => { e.preventDefault(); const v = why.value.trim(); if (v.length < 2) { why.focus(); return; } finish(v); });
+      dialog.querySelector('[data-cancel]').onclick = () => finish(null);
+      dialog.addEventListener('cancel', e => { e.preventDefault(); finish(null); });
+      dialog.showModal();
+      why.focus();
+    });
+  }
+  const noAccount = root => { root.innerHTML = `<div class="page-h"><h1>계정을 추가하세요</h1></div><div class="panel"><div class="empty">[블로그 계정] 메뉴에서 계정을 추가하세요. <button type="button" class="link" data-act="goAccounts">블로그 계정으로 이동</button></div></div>`; root.querySelector('[data-act="goAccounts"]').onclick = () => BB.go('#/blog/accounts'); };
+
+  // ── 품질검사: 원고별 최근 G2 판정 + [검사] ──
+  function pageQuality(root) {
+    const ctx = { alive: true };
+    let shown = null, log = [];
+    root.innerHTML = `<div class="page-h"><h1>품질검사</h1><div class="sub">G2 검사는 같은 블로그의 지난 원고·발행 글과 본문·구성·제목·문구·태그 반복을 비교합니다. PASS 원고만 임시저장할 수 있습니다.</div></div>
+      <div class="panel" data-r="list"><div class="empty">불러오는 중</div></div>
+      <div class="panel" data-r="detail" hidden></div>
+      <div class="panel" data-r="log" hidden></div>`;
+    const $ = r => root.querySelector(`[data-r="${r}"]`);
+    function paint() {
+      if (!ctx.alive || !S) return;
+      const a = curAcc(); if (!a) return noAccount(root);
+      const ms = (S.manuscripts || []).filter(m => m.ok && !m.posted);
+      $('list').innerHTML = `<div class="panel-h"><b>${esc(a.name)} · 발행 전 원고 ${ms.length}건</b><button type="button" class="btn sm" data-act="refresh">새로고침</button></div>` + (ms.length
+        ? `<table class="tbl"><thead><tr><th>원고</th><th>G2 판정</th><th>검사 시각</th><th>저장</th><th></th></tr></thead><tbody>
+          ${ms.map((m, i) => `<tr><td>${esc(m.title || fname(m.file))}<div class="muted mono">${esc(m.draft ? '원고함/' + m.draft : fname(m.file))}</div></td>
+            <td>${verdictSpan(m.g2)}${m.g2 && m.g2.score != null && !m.g2.override ? `<div class="muted">${esc(m.g2.score)}점</div>` : ''}${m.g2 && m.g2.stale ? '<div class="bad" style="font-size:12px">검사 뒤 원고가 바뀜</div>' : ''}${m.g2 && m.g2.override ? `<div class="muted">${esc(m.g2.override.reason)}</div>` : ''}</td>
+            <td class="mono">${esc(m.g2 ? fmtAt(m.g2.checkedAt) : '')}</td>
+            <td>${m.save ? (SAVE_OK[m.save.status] ? '<span class="ok">' : '<span class="bad">') + esc(m.save.statusText) + '</span>' : '<span class="muted">-</span>'}</td>
+            <td class="num"><button type="button" class="btn sm" data-act="check" data-index="${i}">검사</button></td></tr>`).join('')}</tbody></table>`
+        : '<div class="empty">발행 전 원고가 없습니다.</div>');
+      $('list').dataset.n = ms.length;
+      ctx.ms = ms;
+      if (shown) { $('detail').hidden = false; $('detail').innerHTML = `<div class="panel-h"><b>${esc(shown.title)}</b><button type="button" class="btn sm" data-act="toPosts">임시저장 화면으로</button></div>` + g2Html(shown.g2, { title: '검사 결과' }); }
+      if (log.length) { $('log').hidden = false; $('log').innerHTML = `<div class="panel-h"><b>운영자 예외 기록</b><span class="sub">최근 ${log.length}건</span></div><table class="tbl"><thead><tr><th>시각</th><th>블로그</th><th>원고</th><th>판정</th><th>이유</th></tr></thead><tbody>${log.slice(0, 20).map(x => `<tr><td class="mono">${esc(fmtAt(x.at))}</td><td>${esc(accLabel(x.blogId))}</td><td class="mono">${esc(fname(x.manuscript))}</td><td>${esc(x.verdict || '')}</td><td>${esc(x.reason)}</td></tr>`).join('')}</tbody></table>`; }
+    }
+    root.addEventListener('click', async e => {
+      const t = e.target.closest('[data-act]'); if (!t || !root.contains(t)) return;
+      const a = curAcc();
+      try {
+        if (t.dataset.act === 'refresh') { await loadState(); paint(); }
+        else if (t.dataset.act === 'toPosts') { if (shown) lsSet('bb.handSel', shown.file); BB.go('#/blog/posts'); }
+        else if (t.dataset.act === 'check') {
+          const m = ctx.ms[+t.dataset.index]; if (!m || !a) return;
+          t.disabled = true; t.textContent = '검사 중';
+          const r = await BB.api('/api/flow/g2', { blogId: a.blogId, file: m.file });
+          shown = { file: m.file, title: m.title || fname(m.file), g2: r.g2 };
+          await loadState(); paint();
+          $('detail').scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }
+      } catch (err) { paint(); }
+    });
+    loadState().then(paint).catch(() => { });
+    BB.api('/api/flow/override-log').then(r => { log = r.items || []; paint(); }).catch(() => { });
+    return () => { ctx.alive = false; };
+  }
+
+  // ── 발행 대기 / 발행 완료 ──
+  function pagePending(root, kind) {
+    const ctx = { alive: true };
+    let R = null, showDiscard = false, note = '';
+    const isPub = kind === 'published';
+    root.innerHTML = `<div class="page-h"><h1>${isPub ? '발행 완료' : '발행 대기'}</h1><div class="sub">${isPub
+      ? '임시저장한 글 중 블로그 공개 글 목록에서 같은 제목을 찾은 것입니다. 찾으면 원고 옆 publish_record.json 에 남기고 LOGMETER 에 알립니다.'
+      : '네이버 임시저장이 확인된(SAVE_CONFIRMED) 원고입니다. 발행은 네이버 화면에서 사람이 직접 합니다. 발행하면 공개 글 목록에서 찾아 발행 완료로 옮깁니다.'}</div></div>
+      <div class="row"><button type="button" class="btn" data-act="detect">발행 확인</button><button type="button" class="btn" data-act="refresh">새로고침</button>
+        ${isPub ? '<button type="button" class="btn" data-act="retry">LOGMETER 다시 보내기</button>' : ''}<div class="grow"></div><span class="sub" data-r="chk"></span></div>
+      <div class="sub" data-r="note" hidden></div>
+      <div class="panel" data-r="list"><div class="empty">불러오는 중</div></div>
+      <div class="panel" data-r="other" hidden></div>`;
+    const $ = r => root.querySelector(`[data-r="${r}"]`);
+    const g2Cell = it => it.g2 ? `${verdictSpan(it.g2)}${it.g2.score != null && !it.g2.override ? `<div class="muted">${esc(it.g2.score)}점</div>` : ''}${it.g2.stale ? '<div class="muted">검사 뒤 원고가 바뀜</div>' : ''}` : '<span class="muted">기록 없음</span>';
+    const inspCell = it => it.inspection.passed ? '<span class="ok">통과</span>' : `<span class="bad">실패 ${esc(it.inspection.failed)}건</span>`;
+    function paint() {
+      if (!ctx.alive || !R) return;
+      const lc = R.lastCheck;
+      const errs = lc ? (lc.results || []).filter(x => x.error) : [];
+      $('chk').textContent = (lc ? `마지막 확인 ${fmtAt(lc.at)}` : '아직 확인 전') + (R.pollMin ? ` · 대기 글이 있으면 ${R.pollMin}분마다 확인` : '') + (errs.length ? ' · ' + errs.map(x => x.error).join(' / ') : '');
+      $('note').hidden = !note; $('note').innerHTML = note;
+      const items = R.items || [];
+      if (isPub) {
+        const pub = items.filter(x => x.state === 'published');
+        $('list').innerHTML = pub.length ? `<table class="tbl"><thead><tr><th>블로그</th><th>제목</th><th>발행</th><th>감지 시각</th><th>LOGMETER</th><th>품질 이력</th></tr></thead><tbody>
+          ${pub.map(it => { const p = it.publish || {}, lm = p.logmeter; return `<tr><td>${esc(accLabel(it.blogId))}<div class="muted mono">${esc(it.blogId)}</div></td>
+            <td><button type="button" class="link" data-act="url" data-url="${esc(p.url || '')}">${esc(p.title || it.title)}</button><div class="muted mono">${esc(p.logNo || '')}</div></td>
+            <td>${esc(p.publishedAtText || fmtAt(p.publishedAt))}</td><td class="mono">${esc(fmtAt(p.detectedAt))}</td>
+            <td>${lm && lm.sent ? '<span class="ok">보냄</span>' : `<span class="muted">LOGMETER 미연결</span>${lm && lm.error ? `<div class="muted">${esc(lm.error)}</div>` : ''}`}</td>
+            <td>${p.qualityHistory && p.qualityHistory.added ? '<span class="ok">추가함</span>' : `<span class="muted">안 됨</span>${p.qualityHistory && p.qualityHistory.error ? `<div class="muted">${esc(p.qualityHistory.error)}</div>` : ''}`}</td></tr>`; }).join('')}</tbody></table>`
+          : '<div class="empty">아직 감지한 발행 글이 없습니다.</div>';
+        return;
+      }
+      const list = items.filter(x => x.state === 'pending' || x.state === 'hold' || (showDiscard && x.state === 'discard'));
+      const nDis = items.filter(x => x.state === 'discard').length;
+      $('list').innerHTML = `<div class="panel-h"><b>저장 확인 ${items.filter(x => x.state === 'pending').length}건</b>${nDis ? `<label class="row sub" style="gap:6px"><input type="checkbox" data-r="dis"${showDiscard ? ' checked' : ''}> 폐기한 것 보기 (${nDis})</label>` : ''}</div>` + (list.length
+        ? `<table class="tbl"><thead><tr><th>블로그</th><th>제목</th><th>G2 판정</th><th>전수검사</th><th>저장 시각</th><th>상태</th><th></th></tr></thead><tbody>
+          ${list.map(it => `<tr><td>${esc(accLabel(it.blogId))}<div class="muted mono">${esc(it.blogId)}</div></td>
+            <td>${esc(it.title)}<div class="muted mono">${esc(fname(it.dir))}</div></td>
+            <td>${g2Cell(it)}</td><td>${inspCell(it)}${it.inspection.report ? ` <button type="button" class="link" data-act="report" data-id="${esc(it.id)}">검사표</button>` : ''}</td>
+            <td class="mono">${esc(fmtAt(it.savedAt))}</td>
+            <td>${it.state === 'hold' ? '<span class="muted">보류</span>' : it.state === 'discard' ? '<span class="muted">폐기</span>' : '<span class="ok">발행 대기</span>'}</td>
+            <td class="num"><div class="row"><button type="button" class="btn sm pri" data-act="open" data-id="${esc(it.id)}">임시저장 글 열기</button>
+              ${it.state === 'pending' ? `<button type="button" class="btn sm" data-act="hold" data-id="${esc(it.id)}">보류</button><button type="button" class="btn sm danger" data-act="discard" data-id="${esc(it.id)}">폐기</button>`
+                : `<button type="button" class="btn sm" data-act="restore" data-id="${esc(it.id)}">대기로 되돌리기</button>`}</div></td></tr>`).join('')}</tbody></table>`
+        : '<div class="empty">발행을 기다리는 임시저장 글이 없습니다.</div>');
+      const other = items.filter(x => x.state === 'other');
+      $('other').hidden = !other.length;
+      if (other.length) $('other').innerHTML = `<div class="panel-h"><b>저장이 확인되지 않은 실행 ${other.length}건</b><span class="sub">발행 대기에 넣지 않습니다</span></div>
+        <table class="tbl"><thead><tr><th>블로그</th><th>제목</th><th>결과</th><th>시각</th></tr></thead><tbody>${other.map(it => `<tr><td>${esc(accLabel(it.blogId))}</td><td>${esc(it.title)}</td>
+          <td><span class="bad">${esc(it.statusText)}</span>${it.errors[0] ? `<div class="muted">${esc(it.errors[0])}</div>` : ''}</td><td class="mono">${esc(fmtAt(it.savedAt))}</td></tr>`).join('')}</tbody></table>`;
+    }
+    async function load() {
+      try { if (!S) await loadState(); R = await BB.api('/api/flow/pending'); paint(); }
+      catch (err) { if (ctx.alive) $('list').innerHTML = '<div class="empty">목록을 불러오지 못했습니다.</div>'; }
+    }
+    root.addEventListener('change', e => { if (e.target.dataset.r === 'dis') { showDiscard = e.target.checked; paint(); } });
+    root.addEventListener('click', async e => {
+      const t = e.target.closest('[data-act]'); if (!t || !root.contains(t)) return;
+      const act = t.dataset.act, it = R && (R.items || []).find(x => x.id === t.dataset.id);
+      try {
+        if (act === 'refresh') return load();
+        if (act === 'url') return openP(t.dataset.url);
+        if (act === 'report' && it) return openP(it.inspection.report);
+        if (act === 'detect') {
+          t.disabled = true; t.textContent = '확인 중';
+          const r = await BB.api('/api/flow/detect', {});
+          const found = (r.results || []).flatMap(x => x.found || []);
+          const unsent = found.filter(f => !(f.logmeter && f.logmeter.sent));
+          note = found.length ? `발행 글 ${found.length}건을 찾아 발행 완료로 옮겼습니다.${unsent.length ? ' LOGMETER 미연결이라 기록은 다음에 다시 보냅니다.' : ''}` : (r.results || []).length ? '새로 발행된 글을 찾지 못했습니다.' : '확인할 발행 대기 글이 없습니다.';
+          t.disabled = false; t.textContent = '발행 확인';
+          return load();
+        }
+        if (act === 'retry') {
+          const r = await BB.api('/api/flow/lm/retry', {});
+          const ok = (r.results || []).filter(x => x.sent).length, bad = (r.results || []).length - ok;
+          note = (r.results || []).length ? `LOGMETER 에 ${ok}건 보냄${bad ? ` · ${bad}건 실패(LOGMETER 미연결)` : ''}` : '다시 보낼 기록이 없습니다.';
+          return load();
+        }
+        if (!it) return;
+        if (act === 'open') {
+          const r = await BB.api('/api/flow/pending/open', { id: it.id });
+          note = esc(r.message || '');
+          return paint();
+        }
+        if (act === 'hold' || act === 'discard' || act === 'restore') {
+          if (act === 'discard' && !(await BB.confirm(`[${it.title}]\n발행 대기에서 폐기로 표시합니다. 네이버 임시저장 글은 지우지 않습니다(필요하면 네이버에서 직접 삭제). 진행할까요?`))) return;
+          await BB.api('/api/flow/pending/state', { id: it.id, state: act === 'restore' ? 'pending' : act });
+          return load();
+        }
+      } catch (err) { t.disabled = false; }
+    });
+    const off = typeof BB.onEvent === 'function' ? BB.onEvent(ev => { if (ctx.alive && ev && ev.type === 'pending') load(); }) : null;
+    load();
+    return () => { ctx.alive = false; if (typeof off === 'function') off(); };
+  }
+
+  // ── 원고함: 원고마다 지금 어느 단계인지 ──
+  function pageBox(root) {
+    const ctx = { alive: true };
+    root.innerHTML = `<div class="page-h"><h1>원고함</h1><div class="sub">원고마다 생성 → 품질검사 → 임시저장 → 발행 중 어디까지 왔는지 보여 줍니다.</div></div>
+      <div class="row"><button type="button" class="btn" data-act="folder">원고함 폴더 열기</button><button type="button" class="btn" data-act="refresh">새로고침</button></div>
+      <div class="panel" data-r="list"><div class="empty">불러오는 중</div></div>`;
+    const $ = r => root.querySelector(`[data-r="${r}"]`);
+    const stage = m => !m.ok ? '<span class="bad">원고 오류</span>' : m.posted ? '<span class="ok">발행됨</span>'
+      : m.save && m.save.status === 'SAVE_CONFIRMED' ? '<span class="ok">발행 대기</span>'
+        : m.save ? `<span class="bad">${esc(m.save.statusText)}</span>`
+          : m.g2 ? (m.g2.verdict === 'PASS' && !m.g2.stale ? '<span class="muted">품질 통과 · 저장 전</span>' : `<span class="muted">품질검사 ${esc(m.g2.override ? '예외' : m.g2.verdictText || '')}</span>`)
+            : '<span class="muted">작성됨 · 검사 전</span>';
+    function paint() {
+      if (!ctx.alive || !S) return;
+      const a = curAcc(); if (!a) return noAccount(root);
+      const ms = S.manuscripts || [];
+      ctx.ms = ms;
+      $('list').innerHTML = `<div class="panel-h"><b>${esc(a.name)} · 원고 ${ms.length}건</b></div>` + (ms.length ? `<table class="tbl"><thead><tr><th>원고</th><th>단계</th><th>G2</th><th class="num">본문</th><th></th></tr></thead><tbody>
+        ${ms.map((m, i) => `<tr><td>${esc(m.title || fname(m.file))}<div class="muted mono">${esc(m.draft ? '원고함/' + m.draft : fname(m.file))}</div></td><td>${stage(m)}</td>
+          <td>${m.g2 ? verdictSpan(m.g2) : '<span class="muted">-</span>'}</td><td class="num">${m.chars ? esc(Number(m.chars).toLocaleString()) + '자' : ''}</td>
+          <td class="num"><div class="row"><button type="button" class="link" data-act="open" data-index="${i}">원고</button><button type="button" class="link" data-act="dir" data-index="${i}">폴더</button>${m.draft ? `<button type="button" class="link" data-act="preview" data-index="${i}">미리보기</button>` : ''}</div></td></tr>`).join('')}</tbody></table>`
+        : '<div class="empty">원고가 없습니다.</div>');
+    }
+    root.addEventListener('click', async e => {
+      const t = e.target.closest('[data-act]'); if (!t || !root.contains(t)) return;
+      const m = ctx.ms && ctx.ms[+t.dataset.index];
+      try {
+        if (t.dataset.act === 'refresh') { await loadState(); paint(); }
+        else if (t.dataset.act === 'folder') { const app = await BB.api('/api/app'); openP(app.project + '\\원고함'); }
+        else if (t.dataset.act === 'open' && m) openP(m.file);
+        else if (t.dataset.act === 'dir' && m) openP(String(m.file).replace(/[\\/][^\\/]+$/, ''));
+        else if (t.dataset.act === 'preview' && m) BB.go('#/blog/write/' + m.draft.split('/').map(encodeURIComponent).join('/'));
+      } catch (err) { }
+    });
+    loadState().then(paint).catch(() => { });
+    return () => { ctx.alive = false; };
+  }
+
+  // ── 다음 글 설계: 최근 올린 글 · 피해야 할 것 · 다음 글은 이렇게 (/api/flow/formplan) ──
+  // 같은 형태(제목 틀·도입·끝맺음·강조)가 반복되면 검색에서 빠지므로, 쓰기 전에 최근 글과 다른 형태를 보여 준다. 자동 원고에도 같은 내용이 들어간다.
+  function formPlanPanel(box, ctx) {
+    const a = curAcc(); if (!box) return;
+    if (!a) { box.hidden = true; return; }
+    box.innerHTML = '<div class="panel-h"><b>다음 글 설계</b><span class="sub">불러오는 중</span></div>';
+    BB.api('/api/flow/formplan?blogId=' + encodeURIComponent(a.blogId) + '&n=5').then(F => {
+      if (!ctx.alive) return;
+      const recent = (F.recent || []).slice().reverse();
+      const li = arr => arr.length ? `<ul class="fp-list">${arr.map(x => `<li>${x}</li>`).join('')}</ul>` : '<div class="muted">없음</div>';
+      const recentHtml = recent.length ? `<ul class="fp-list">${recent.map(r => `<li><div class="fp-t">${esc(r.title || '(제목 없음)')}</div>
+        <div class="fp-m">${esc([r.date ? r.date.slice(5).replace('-', '.') : '', r.posted ? '발행' : '원고', '제목 ' + r.titleFormKo, '도입 ' + r.openerKo, '끝 ' + r.endingKo, (r.chars || 0).toLocaleString() + '자', '사진 ' + r.images].filter(Boolean).join(' · '))}</div></li>`).join('')}</ul>`
+        : '<div class="muted">분석할 원고가 아직 없습니다.</div>';
+      const avoid = (F.avoidText || []).map(esc);
+      const topics = (F.topics || []).length ? `<div class="fp-sub">최근 많이 다룬 소재</div><div class="fp-m">${F.topics.map(t => `${esc(t.word)} ${t.count}`).join(' · ')}</div>` : '';
+      box.innerHTML = `<div class="panel-h"><b>다음 글 설계</b><span class="sub">최근 ${F.count || 0}편 형태 분석 · 자동 원고에도 반영됩니다</span></div>
+        <div class="fp-grid">
+          <section><h4>최근 올린 글</h4>${recentHtml}</section>
+          <section><h4>피해야 할 것</h4>${li(avoid)}${topics}</section>
+          <section><h4>다음 글은 이렇게</h4>${F.count ? li((F.nextText || []).map(esc)) : '<div class="muted">최근 원고가 쌓이면 보여 드립니다.</div>'}</section>
+        </div>`;
+    }).catch(() => { if (ctx.alive) box.innerHTML = '<div class="panel-h"><b>다음 글 설계</b><span class="sub">지금은 불러오지 못했습니다</span></div>'; });
+  }
+
+  // ── 추천 키워드 큐 (LOGMETER) ──
+  function pageKeywords(root) {
+    const ctx = { alive: true };
+    let R = null, rowNote = {}, busy = false;
+    root.innerHTML = `<div class="page-h"><h1>추천 키워드 큐</h1><div class="sub">LOGMETER 가 이 블로그의 글·주제·검색 자료로 고른 다음 글 후보입니다. 점수는 LOGMETER 내부 정렬값이며 노출을 보장하지 않습니다.</div></div>
+      <div class="row"><button type="button" class="btn" data-act="reload">다시 받기</button><button type="button" class="btn" data-act="refresh" title="LOGMETER 가 추천을 새로 계산합니다(10분에 한 번)">새로 계산</button><div class="grow"></div><span class="sub" data-r="meta"></span></div>
+      <div class="sub" data-r="state"></div>
+      <div class="panel" data-r="nextp"></div>
+      <div class="panel" data-r="list"><div class="empty">불러오는 중</div></div>`;
+    const $ = r => root.querySelector(`[data-r="${r}"]`);
+    const ul = arr => arr && arr.length ? `<ul class="flow-why">${arr.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<span class="muted">-</span>';
+    function paint() {
+      if (!ctx.alive) return;
+      const a = curAcc(); if (!a) return noAccount(root);
+      if (!R) return;
+      const recs = R.recommendations || [];
+      $('state').innerHTML = R.offline
+        ? `<span class="bad">LOGMETER 미연결</span> ${esc(R.error || '')}${R.fetchedAt ? ` · 마지막으로 받은 결과(${esc(fmtAt(R.fetchedAt))})를 보여 줍니다` : ''}`
+        : `<span class="ok">LOGMETER 연결됨</span> 받은 시각 ${esc(fmtAt(R.fetchedAt))}${R.refreshSkipped ? ' · ' + esc(R.refreshSkipped) : ''}`;
+      $('meta').textContent = [R.dnaTopic ? '주제 ' + R.dnaTopic : '', R.mode === 'NO_KEY' ? '검색광고 키 없음(검색량 미반영)' : R.mode ? '자료 ' + R.mode : '', R.generatedAt ? '계산 ' + fmtAt(R.generatedAt) : ''].filter(Boolean).join(' · ');
+      $('list').innerHTML = `<div class="panel-h"><b>${esc(a.name)} · 후보 ${recs.length}개</b></div>` + (recs.length
+        ? `<table class="tbl"><thead><tr><th>키워드</th><th>판정</th><th>신뢰도</th><th>근거</th><th>주의</th><th></th></tr></thead><tbody>
+          ${recs.map((r, i) => `<tr><td style="min-width:110px"><b>${esc(r.keyword)}</b><div class="muted">${esc(r.intent || '')}</div></td>
+            <td>${/RECOMMEND/.test(r.status) ? `<span class="ok">${esc(r.statusText)}</span>` : `<span class="muted">${esc(r.statusText || r.status)}</span>`}${r.dataStatusText ? `<div class="muted">${esc(r.dataStatusText)}</div>` : ''}</td>
+            <td>${esc(CONF_TXT[r.confidence] || r.confidence || '-')}</td>
+            <td style="min-width:220px">${ul(r.reasons)}</td><td style="min-width:200px">${ul(r.cautions)}</td>
+            <td class="num"><div class="row"><button type="button" class="btn sm" data-act="reserve" data-index="${i}">예약</button><button type="button" class="btn sm pri" data-act="write" data-index="${i}">원고 만들기</button></div>
+              ${rowNote[r.candidateId || i] ? `<div class="sub" style="white-space:normal;text-align:left;margin-top:6px">${rowNote[r.candidateId || i]}</div>` : ''}</td></tr>`).join('')}</tbody></table>`
+        : `<div class="empty">${R.offline ? 'LOGMETER 에 연결하지 못했고 저장된 결과도 없습니다. LOGMETER 를 켠 뒤 [다시 받기]를 누르세요.' : esc(R.error || '추천 후보가 없습니다.')}</div>`);
+    }
+    async function load(refresh) {
+      const a = curAcc(); if (!a) return noAccount(root);
+      if (busy) return; busy = true;
+      $('state').textContent = 'LOGMETER 에서 받는 중';
+      try { R = await BB.api('/api/flow/lm/recs?blogId=' + encodeURIComponent(a.blogId) + (refresh ? '&refresh=1' : '')); paint(); }
+      catch (err) { if (ctx.alive) $('list').innerHTML = '<div class="empty">추천을 불러오지 못했습니다.</div>'; }
+      finally { busy = false; }
+    }
+    root.addEventListener('click', async e => {
+      const t = e.target.closest('[data-act]'); if (!t || !root.contains(t)) return;
+      const a = curAcc(); const r = R && (R.recommendations || [])[+t.dataset.index];
+      try {
+        if (t.dataset.act === 'reload') return load(false);
+        if (t.dataset.act === 'refresh') return load(true);
+        if (t.dataset.act === 'goSettings') return BB.go('#/blog/settings');
+        if (!r || !a) return;
+        const key = r.candidateId || t.dataset.index;
+        if (t.dataset.act === 'reserve') {
+          const x = await BB.api('/api/flow/lm/reserve', { blogId: a.blogId, keyword: r.keyword, intentClusterId: r.intentClusterId, candidateId: r.candidateId });
+          rowNote[key] = x.ok ? `<span class="ok">예약함</span>${x.reservation && x.reservation.expiresAt ? ' · ' + esc(fmtAt(x.reservation.expiresAt)) + '까지' : ''}` : `<span class="bad">${x.conflict ? '예약 충돌' : '예약 못 함'}</span> ${esc(x.message || '')}`;
+          return paint();
+        }
+        if (t.dataset.act === 'write') {
+          const gs = await BB.api('/api/gen/settings');
+          if (!gs.hasKey && !gs.fake) { rowNote[key] = '<span class="bad">OpenAI API 키 없음</span> 원고 생성기를 쓰려면 키가 필요합니다. <button type="button" class="link" data-act="goSettings">입력 설정 → AI 설정</button>'; return paint(); }
+          const brief = [`LOGMETER 추천 키워드: ${r.keyword} (판정 ${r.statusText || r.status} · 신뢰도 ${CONF_TXT[r.confidence] || r.confidence || '-'})`,
+            r.reasons && r.reasons.length ? '근거:\n' + r.reasons.map(x => '- ' + x).join('\n') : '',
+            r.cautions && r.cautions.length ? '주의:\n' + r.cautions.map(x => '- ' + x).join('\n') : ''].filter(Boolean).join('\n');
+          lsSet('bb.topicKw', r.keyword); lsSet('bb.topicBrief', brief.slice(0, 3000));
+          return BB.go('#/blog/write');
+        }
+      } catch (err) { }
+    });
+    loadState().then(() => { formPlanPanel($('nextp'), ctx); return load(false); }).catch(() => { });
+    return () => { ctx.alive = false; };
+  }
+
+  // ── LOGMETER 동기화 ──
+  function pageLogmeter(root) {
+    const ctx = { alive: true };
+    let H = null, note = '';
+    root.innerHTML = `<div class="page-h"><h1>LOGMETER 동기화</h1><div class="sub">이 PC의 LOGMETER(로컬 모드)와 추천 키워드·발행 기록·발행 글 지문을 주고받습니다.</div></div>
+      <div class="panel" data-r="st"><div class="empty">확인 중</div></div>`;
+    const $ = r => root.querySelector(`[data-r="${r}"]`);
+    const SRC = { file: 'index_web\\_data\\exe_token 파일', secret: '앱 비밀값 저장소', memory: '앱 메모리' };
+    function paint() {
+      if (!ctx.alive || !H) return;
+      const a = curAcc();
+      $('st').innerHTML = `<div class="panel-h"><b>연결 상태</b><button type="button" class="btn sm" data-act="check">다시 확인</button></div>
+        <dl class="kv"><dt>상태</dt><dd>${H.connected ? '<span class="ok">연결됨</span>' : '<span class="bad">LOGMETER 미연결</span>'}${H.error && !H.connected ? ` <span class="muted">${esc(H.error)}</span>` : ''}</dd>
+        <dt>주소</dt><dd class="mono">${esc(H.base)}</dd><dt>토큰</dt><dd>${H.tokenSource ? esc(SRC[H.tokenSource] || H.tokenSource) : '<span class="bad">없음</span>'}</dd>
+        <dt>지문 버전</dt><dd class="mono">${esc(H.fingerprintVersion || '-')}</dd></dl>
+        <div class="panel-h" style="margin-top:18px"><b>주고받기</b></div>
+        <div class="row"><button type="button" class="btn" data-act="fp"${a ? '' : ' disabled'}>발행 글 지문 가져오기${a ? ' · ' + esc(a.name) : ''}</button><button type="button" class="btn" data-act="retry">못 보낸 발행 기록 다시 보내기</button></div>
+        <div class="hint" style="margin-top:6px">지문은 LOGMETER 가 읽은 발행 글의 제목·구성(본문 없음)입니다. 가져오면 G2 품질검사가 제목 공식·구성 반복을 비교할 때 씁니다. 발행 기록은 발행 감지 때 자동으로 보내고, 연결이 끊겨 있었던 것만 여기서 다시 보냅니다.</div>
+        ${note ? `<div class="sub" style="margin-top:10px">${note}</div>` : ''}`;
+    }
+    async function check() { try { H = await BB.api('/api/flow/lm/status'); paint(); } catch (err) { } }
+    root.addEventListener('click', async e => {
+      const t = e.target.closest('[data-act]'); if (!t || !root.contains(t)) return;
+      try {
+        if (t.dataset.act === 'check') return check();
+        if (t.dataset.act === 'fp') { const a = curAcc(); if (!a) return; const r = await BB.api('/api/flow/lm/fingerprints', { blogId: a.blogId }); note = r.ok ? `<span class="ok">지문 ${esc(r.added)}건 반영</span> · 구성까지 있는 것 ${esc(r.structureKnown)}건${r.skipped ? ` · 건너뜀 ${esc(r.skipped)}건` : ''}` : `<span class="bad">가져오지 못함</span> ${esc(r.error || '')}`; return paint(); }
+        if (t.dataset.act === 'retry') { const r = await BB.api('/api/flow/lm/retry', {}); const ok = (r.results || []).filter(x => x.sent).length; note = (r.results || []).length ? `${ok}건 보냄 · ${(r.results || []).length - ok}건 실패` : '다시 보낼 기록이 없습니다.'; return paint(); }
+      } catch (err) { }
+    });
+    loadState().then(check).catch(check);
+    return () => { ctx.alive = false; };
+  }
+
+  const PAGES = { keywords: pageKeywords, quality: pageQuality, pending: p => pagePending(p, 'pending'), published: p => pagePending(p, 'published'), box: pageBox, logmeter: pageLogmeter, analyze: pageAnalyze, dash: pageDash, 'insight-settings': pageInsightSettings, write: pageWrite, posts: pagePosts, accounts: pageAccounts, ips: pageIps, history: pageHistory, neighbors: pageNeighbors, topics: pageTopics, settings: pageSettings };
 
   BB.mod('blog', {
     name: '네이버 블로그',
-    desc: '네이버 블로그에 원고를 사람 타자 속도로 입력하고, 전수검사를 통과하면 발행합니다.',
+    desc: '추천 키워드로 원고를 만들고, 품질검사를 통과한 원고를 사람 타자 속도로 입력해 임시저장합니다. 발행은 사람이 직접 합니다.',
     order: 1,
     ready: true,
-    nav: [['dash', '대시보드'], ['analyze', '블로그 분석'], ['topics', '주제 조회'], ['write', '원고 만들기'], ['posts', '원고·발행'], ['accounts', '블로그 계정'], ['history', '발행 기록'], ['neighbors', '이웃 후보'], ['settings', '입력 설정'], ['insight-settings', '데이터 설정']],
+    nav: [['-work', '작업'], ['keywords', '추천 키워드 큐'], ['write', '원고 생성'], ['quality', '품질검사'], ['posts', '임시저장'], ['pending', '발행 대기'], ['published', '발행 완료'], ['box', '원고함'],
+      ['-data', '분석'], ['dash', '대시보드'], ['analyze', '블로그 분석'], ['topics', '주제 조회'], ['neighbors', '이웃 후보'], ['history', '실행 기록'],
+      ['-link', '연결'], ['logmeter', 'LOGMETER 동기화'], ['accounts', '블로그 계정'], ['ips', '고정 IP'], ['settings', '입력 설정'], ['insight-settings', '데이터 설정']],
     sideTop,
     render,
   });

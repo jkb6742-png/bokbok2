@@ -11,6 +11,10 @@ const ST = require('./styles');
 // 인용구스타일: 따옴표|세로선|말풍선|밑줄|포스트잇|프레임   (없으면 따옴표 · 글 전체 기본)
 // 구분선스타일: 구분선1|구분선2|…|구분선8               (없으면 구분선1)
 //
+// [표]                  ← 에디터 표(가운데 정렬, 2~4열). 칸은 ' | ', 첫 줄 머리글(굵게)
+// 구분 | 말할 때 | 생각할 때
+// 속도 | 느림 | 빠름
+// [/표]
 // > 인용구               '---' 구분선     [사진] 파일명.png
 // >[세로선] 인용구        ---[구분선1]      ← 한 칸만 다른 스타일로
 // ## 소주제(19 굵게)      일반 줄(16 보통)  **강조**  [[INFJ|#bdfbfa]] 형광펜
@@ -37,8 +41,15 @@ function parseTxt(file) {
     if (buf.length) S.blocks.push({ text: buf.map(l => l.trimEnd()) });
     buf = null;
   };
+  let tbl = null;   // [표] … [/표] 사이 줄: 칸은 ' | ' 로 나눔, 첫 줄은 머리글(굵게)
   for (const l of rest.join('\n\n').split('\n')) {
     const t = l.trim();
+    if (tbl) {
+      if (t === '[/표]') { if (tbl.length) S.blocks.push({ table: tbl }); tbl = null; }
+      else if (t) tbl.push(t.split('|').map(x => x.trim()));
+      continue;
+    }
+    if (t === '[표]') { flush(); tbl = []; continue; }
     const qo = t.match(/^>\[([^\]]+)\]\s*(.*)$/);   // >[세로선] 한 칸만 다른 스타일
     const lo = t.match(/^---\[([^\]]+)\]$/);        // ---[구분선1]
     if (qo) { flush(); S.blocks.push({ quote: qo[2].trim(), style: ST.quoteKey(qo[1]) }); }
@@ -57,6 +68,15 @@ function parseTxt(file) {
     else (buf = buf || []).push(t);
   }
   flush();
+  if (tbl) throw new Error('[표] 를 닫는 [/표] 가 없음');
+  // 표 뒤에는 에디터가 본문 칸을 만들어 주지 않아 write.js가 새 본문 칸을 직접 만든다 → 바로 다음은 본문(또는 해시태그)이어야 빈 칸이 안 남는다
+  S.blocks.forEach((b, i) => { if (b.table) { const n = S.blocks[i + 1]; if (!n || !(n.text || n.hashtags)) throw new Error('표 바로 다음에는 본문 줄이 와야 합니다'); } });
+  for (const b of S.blocks) if (b.table) {
+    const w = b.table[0].length;
+    if (w < 2 || w > 4) throw new Error(`표는 2~4열만: "${b.table[0].join(' | ')}"`);
+    const bad = b.table.find(r => r.length !== w);
+    if (bad) throw new Error(`표 칸 수가 다름: "${bad.join(' | ')}" (머리글 ${w}칸)`);
+  }
   return S;
 }
 

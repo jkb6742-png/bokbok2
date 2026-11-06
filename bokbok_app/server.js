@@ -11,6 +11,7 @@ const STATIC = path.join(__dirname, 'static');
 const DATA = process.env.BOKBOK_DATA || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'bokbok');
 fs.mkdirSync(DATA, { recursive: true });
 const { summary } = require(path.join(TOOL, 'manuscript.js'));
+const IDX = require('./idx.js');   // 병원 블로그 지수(index_web) 편입: 3610 자식 프로세스 + 입장권
 
 // ── 저장소 ─────────────────────────────────────────
 const file = n => path.join(DATA, n + '.json');
@@ -94,14 +95,34 @@ async function netStatus(force) {
   };
 }
 const DEFAULT_SETTINGS = {
-  tpm: 800, jitter: 30, linePause: 300, tagPause: 900, mode: 'publish',
+  tpm: 800, jitter: 30, linePause: 300, tagPause: 900, mode: 'save',   // 자동 발행은 꺼짐(2026-11-05) — 기본은 임시저장(SAVE)
   typoN: 3, thinkN: 2,        // 원고 1편당 오타 내고 고치기 · 문장 끝 생각 멈춤 횟수
   readN: 2, readSec: 60,      // 발행 뒤 관련 키워드로 다른 사람 글 N편 읽기(각 약 readSec초, 읽기만)
   clearCache: true,           // 발행 뒤 그 계정 크롬의 캐시만 비움(쿠키·로그인 유지) — keep 방식일 때만 의미 있음
   loginMode: 'fresh',         // fresh: 매번 새 시크릿 창에서 사람이 직접 로그인(끝나면 임시 프로필 삭제) · keep: 계정별 프로필에 로그인 유지
   scanDirs: [path.join(PROJECT, '_도구', '원고데이터'), path.join(PROJECT, '원고함')],
 };
-const settings = () => ({ ...DEFAULT_SETTINGS, ...read('settings', {}) });
+const settings = () => { const s = { ...DEFAULT_SETTINGS, ...read('settings', {}) }; if (!['save', 'stop', 'test'].includes(s.mode)) s.mode = 'save'; return s; };
+// 블로그별 입력 설정: accounts[].settings 에 바꾼 항목만 저장하고, 없는 항목은 위 기본값(입력 설정 화면)을 따른다.
+//   고정 IP가 할당된 블로그는 로그인 방식을 keep(전용 크롬에 로그인 유지)으로 고정한다 — 매번 새 시크릿 창이면 IP가 같아도 네이버가 매번 새 기기로 본다.
+const BLOG_SET_KEYS = ['tpm', 'jitter', 'linePause', 'tagPause', 'typoN', 'thinkN', 'readN', 'readSec', 'clearCache', 'loginMode', 'mode'];
+function settingsFor(blogId) {
+  const a = accounts.find(x => x.blogId === blogId) || {};
+  const s = { ...settings() };
+  for (const k of BLOG_SET_KEYS) if (a.settings && a.settings[k] !== undefined) s[k] = a.settings[k];
+  if (a.ipId) s.loginMode = 'keep';
+  return s;
+}
+function cleanBlogSettings(b) {   // 화면에서 온 값 → 범위 맞춘 값 (주지 않은 항목은 넣지 않음 = 기본값 따름)
+  const n = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(+v)));
+  const R = { tpm: [100, 3000], jitter: [0, 80], linePause: [0, 3000], tagPause: [300, 5000], typoN: [0, 12], thinkN: [0, 12], readN: [0, 5], readSec: [20, 180] };
+  const out = {};
+  for (const [k, [lo, hi]] of Object.entries(R)) if (b[k] !== undefined && b[k] !== null && Number.isFinite(+b[k])) out[k] = n(b[k], lo, hi);
+  if (typeof b.clearCache === 'boolean') out.clearCache = b.clearCache;
+  if (['fresh', 'keep'].includes(b.loginMode)) out.loginMode = b.loginMode;
+  if (['save', 'stop', 'test'].includes(b.mode)) out.mode = b.mode;
+  return out;
+}
 let accounts = read('accounts', null);
 if (!accounts) { accounts = [{ name: '복복이의 이것저것', blogId: 'jsrjkb6742' }]; write('accounts', accounts); }
 // 블로그 계정 소유자(owner = 앱 로그인 아이디): 각자 자기 블로그 계정만 본다. 소유자가 없는 예전 계정은 첫 관리자 것으로.
@@ -114,7 +135,24 @@ function ensureOwners() {
   for (const a of accounts) if (!a.owner) a.owner = adminEmail;
   write('accounts', accounts);
 }
-const visibleAccounts = me => (!me || me.internal) ? accounts : accounts.filter(a => !a.owner || a.owner === me.user.email);
+// 병의원 전용(2026-11-05): 계정 kind = 'hospital'(진료과·지역) | 'general'(일반 블로그 — 관리자 CMD 로만, 관리자 화면에만 보임)
+const DEPT = require(path.join(__dirname, 'medical', 'departments.js'));
+(function ensureKinds() {
+  let ch = false;
+  for (const a of accounts) {
+    if (a.kind) continue;
+    const g = a.dept || DEPT.guess([a.name, a.blogId, (a.categories || []).join(' ')].join(' '));
+    a.kind = g ? 'hospital' : 'general'; if (g) a.dept = g; ch = true;
+  }
+  if (ch) write('accounts', accounts);
+})();
+const cleanRegion = r => { r = r || {}; const c = (v, n) => String(v || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, n); return { sido: c(r.sido, 20), sigungu: c(r.sigungu, 20), area: c(r.area, 30) }; };
+// 병원 계정을 지수 등록부에도 맞춘다(지수 서버가 꺼져 있으면 다음 화면 진입 때 다시)
+function syncHospital(a, me) {
+  if (!a || a.kind !== 'hospital' || !a.dept || !(a.region && (a.region.sigungu || a.region.area))) return;
+  IDX.hospitals({ dataDir: DATA, user: me && me.user ? me.user.name || me.user.email : 'bokbok', role: 'user', save: { blogId: a.blogId, name: a.name, dept: a.dept, region: a.region } }).catch(() => { });
+}
+const visibleAccounts = me => (!me || me.internal) ? accounts : accounts.filter(a => (!a.owner || a.owner === me.user.email) && (a.kind !== 'general' || (me.user && me.user.role === 'admin')));
 function checkOwner(me, blogId, P) {
   if (!me || me.internal || !blogId || P.startsWith('/api/admin/')) return;
   const a = accounts.find(x => x.blogId === String(blogId));
@@ -158,6 +196,12 @@ async function blogTitles(blogId) {
   }
   titleCache[blogId] = { at: Date.now(), titles: titles.map(x => x.title), posts: titles };
   return titleCache[blogId].titles;
+}
+// 다음 글 설계: 이 블로그 최근 원고의 형태(제목 틀·도입·끝맺음 등)와 많이 다룬 소재 → 피할 것·다음 글 설계 (qualityormplan_blog.js)
+async function formPlanFor(blogId, n = 5) {
+  const fpb = require(path.join(__dirname, 'quality', 'formplan_blog.js'));
+  let published = []; try { published = await blogTitles(blogId); } catch { }
+  return fpb.forBlog({ blogId, files: manuscriptFiles(blogId), history: read('history', []), published, n });
 }
 // 제목 + 글 번호 (내부 링크용)
 async function blogPosts(blogId) { await blogTitles(blogId); return (titleCache[blogId] && titleCache[blogId].posts) || []; }
@@ -243,7 +287,7 @@ const Q = {
   },
   // 각 작업의 끝 이벤트를 받아 running 항목을 마감
   onEvent(type, data) {
-    if (type === 'done') { const it = this.running('publish'); if (it) this.finish(it, !!(data && data.pass), data, data && data.pass ? null : (data && data.fails && data.fails[0]) || '검사 실패'); }
+    if (type === 'done') { const it = this.running('publish'); const ok = !!(data && (data.saveStatus ? data.saveStatus === 'SAVE_CONFIRMED' || data.saveStatus === 'MANUAL_PACKAGE_WRITTEN' : data.pass)); if (it) this.finish(it, ok, data, ok ? null : (data && data.saveStatusText) || (data && data.fails && data.fails[0]) || '검사 실패'); }
     else if (type === 'gendone') { const it = this.running('generate'); if (it) this.finish(it, !!(data && data.ok), { dir: data && data.dir, title: data && data.title }, data && data.error); }
     else if (type === 'chdone' && data && data.p) { const it = this.running('channel:' + data.p); if (it) this.finish(it, !data.error, data.result || null, data.error || null); }
     else if (type === 'progress' || type === 'genstep') { const it = this.running(type === 'progress' ? 'publish' : 'generate'); if (it) { it.progress = type === 'progress' ? String(data) : (data && data.name) || ''; this.broadcast(); } }
@@ -306,17 +350,31 @@ function profileDirOf(blogId) {
   const LOCAL = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
   return id === 'jsrjkb6742' ? path.join(LOCAL, 'naver-blog-profile') : path.join(LOCAL, 'bokbok', 'profiles', id);
 }
-function run(blogId, mf, mode, { direct = false } = {}) {
+// 고정 IP(프록시) 목록: 앱에 등록해 두고 블로그 계정마다 하나를 할당한다 (fixed_ips.json, 계정 accounts[].ipId)
+//   { id, label, proxy: 'host:port' | 'http://host:port' | 'socks5://127.0.0.1:port', ip: '출구 IPv4' }
+//   할당된 계정은 크롬을 그 프록시로 띄우고, 네이버를 열기 전·발행 직전에 출구 IP가 ip와 같은지 확인한다(다르면 중단).
+let fixedIps = read('fixed_ips', []);
+const IP_MAX_BLOGS = 2;   // 고정 IP 하나에 할당할 수 있는 블로그 수
+const ipOwner = me => (me && !me.internal && me.user) ? me.user.email : '';
+const myIps = me => fixedIps.filter(x => (me && me.internal) || x.owner === ipOwner(me)).map(x => ({ ...x, used: accounts.filter(a => a.ipId === x.id).map(a => a.blogId) }));
+const normProxy = v => { const t = String(v || '').trim(); if (!t) return ''; const m = t.match(/^(?:(https?|socks5):\/\/)?([a-zA-Z0-9.-]{1,100}):(\d{2,5})$/); if (!m || +m[3] > 65535) throw new Error('프록시는 주소:포트 형식이어야 합니다 (예: 1.2.3.4:8080 또는 socks5://127.0.0.1:11001)'); return `${m[1] || 'http'}://${m[2]}:${m[3]}`; };
+function netEnvOf(blogId) {
+  const a = accounts.find(x => x.blogId === blogId) || {};
+  const ip = a.ipId && fixedIps.find(x => x.id === a.ipId);
+  if (a.ipId && !ip) return { BLOG_PROXY: '', BLOG_FIXED_IP: 'MISSING' };   // 할당한 IP가 목록에서 지워졌으면 실행을 막는다
+  return ip ? { BLOG_PROXY: ip.proxy, BLOG_FIXED_IP: ip.ip } : { BLOG_PROXY: '', BLOG_FIXED_IP: '' };
+}
+function run(blogId, mf, mode, { direct = false, skipG2 = false, override = null } = {}) {
   if (job && !job.done) throw new Error('이미 실행 중');
-  const st = settings();
+  const st = settingsFor(blogId);
   if (direct) { const acc = accounts.find(a => a.blogId === blogId) || {}; Q.track({ lane: 'publish', kind: 'publish', blogId, label: `${acc.name || blogId} · ${path.basename(String(mf || ''))}`, payload: { blogId, file: mf, mode } }); }
-  const env = { ...process.env, BLOG_ID: blogId, BLOG_PROFILE: profileDirOf(blogId), TPM: String(st.tpm), JITTER: String(st.jitter), LINE_PAUSE: String(st.linePause), TAG_PAUSE: String(st.tagPause), REPORT_DIR: path.join(DATA, 'reports'),
+  const env = { ...process.env, BLOG_ID: blogId, BLOG_PROFILE: profileDirOf(blogId), ...netEnvOf(blogId), TPM: String(st.tpm), JITTER: String(st.jitter), LINE_PAUSE: String(st.linePause), TAG_PAUSE: String(st.tagPause), REPORT_DIR: path.join(DATA, 'reports'),
     TYPO_N: String(st.typoN ?? 0), THINK_N: String(st.thinkN ?? 0), READ_N: String(st.readN ?? 0), READ_SEC: String(st.readSec ?? 60), CLEAR_CACHE: st.clearCache === false ? '0' : '1', LOGIN_MODE: st.loginMode === 'keep' ? 'keep' : 'fresh' };
-  delete env.FAST; delete env.PUBLISH;
-  if (mode === 'test') env.FAST = '1';
-  if (mode === 'publish') env.PUBLISH = '1';
-  const proc = spawn(process.execPath, [path.join(TOOL, 'write.js'), mf], { cwd: TOOL, env });
-  job = { proc, blogId, file: mf, mode, lines: [], progress: '', result: null, read: [], done: false, started: Date.now() };
+  // 실행 방식: save(SAVE=1, 기본) · stop · test(FAST) · manual(INPUT_MODE=MANUAL_EDITOR). PUBLISH 는 절대 넣지 않는다.
+  const runEnv = flow.runEnv(env, mode, { skipG2 });
+  const proc = spawn(process.execPath, [path.join(TOOL, 'write.js'), mf], { cwd: TOOL, env: runEnv });
+  job = { proc, blogId, file: mf, mode, lines: [], progress: '', result: null, read: [], done: false, started: Date.now(), override };
+  if (override) { const l = `운영자 예외로 G2 건너뜀(SKIP_G2=1) · 판정 ${override.verdict || '없음'} · 이유: ${override.reason}`; job.lines.push(l); emit('log', l); }
   const onLine = l => {
     if (!l.trim()) return;
     if (l.startsWith('@@진행 ')) { job.progress = l.slice(5); return emit('progress', job.progress); }
@@ -330,13 +388,85 @@ function run(blogId, mf, mode, { direct = false } = {}) {
   proc.on('close', code => {
     if (buf) onLine(buf);
     job.done = true;
+    if (mode === 'save' || mode === 'manual') {
+      const sr = flow.readSaveResult(mf, job.started);
+      job.result = { ...(job.result || { pass: false, fails: ['결과를 받지 못했습니다'] }), saveStatus: sr ? sr.status : 'RUNNING', saveStatusText: sr ? sr.statusText : '저장 결과 파일(save_result.json)을 찾지 못했습니다', resultFile: sr ? sr.file : null, manualPackage: (sr && sr.manualPackage) || (job.result && job.result.manualPackage) || null };
+    }
     const h = read('history', []);
-    h.unshift({ at: new Date().toISOString(), blogId, file: mf, mode, code, ...(job.result || {}), ...(job.read.length ? { read: job.read } : {}) });
+    h.unshift({ at: new Date().toISOString(), blogId, file: mf, mode, code, ...(job.result || {}), ...(job.override ? { override: { reason: job.override.reason, verdict: job.override.verdict, at: job.override.at } } : {}), ...(job.read.length ? { read: job.read } : {}) });
     write('history', h.slice(0, 300));
     delete titleCache[blogId];
     emit('done', job.result || { pass: false, fails: ['중단됨'] });
+    emitRaw('pending', { at: Date.now() });
     if (job.read.length) neighborScan(blogId, job.read).catch(e => console.error('이웃 후보 점수:', e.message));
   });
+}
+
+// ── 발행 대기 · 발행 감지 ──
+const flowMod = require(path.join(__dirname, 'flow.js'));
+// 원고 출처 전부(직접 등록 manuscripts.json + 자동 찾기 폴더 + 계정별 원고함 초안). me 가 있으면 그 사람 계정만
+function flowFiles(me) {
+  const list = me ? visibleAccounts(me) : accounts;
+  const out = new Set();
+  for (const a of list) for (const m of manuscriptFiles(a.blogId)) out.add(m.path);
+  if (!list.length) for (const m of manuscriptFiles(null)) out.add(m.path);
+  return [...out];
+}
+const PUB_POLL_MS = process.env.BOKBOK_PUBLISH_POLL === 'off' ? 0 : Math.max(60000, +process.env.BOKBOK_PUBLISH_POLL_MS || 10 * 60000);
+let detectLast = null, detectNext = null, detecting = null;
+async function detectPublished(onlyBlog, me) {
+  if (detecting) return detecting;
+  detecting = (async () => {
+    const items = flow.scan(flowFiles(me));
+    const ids = [...new Set(items.filter(x => x.state === 'pending' && x.blogId && (!onlyBlog || x.blogId === onlyBlog)).map(x => x.blogId))];
+    const results = [];
+    for (const id of ids) {
+      try { results.push(await flow.detect(id, items)); }
+      catch (e) { results.push({ blogId: id, error: '공개 글 목록을 읽지 못했습니다: ' + e.message }); }
+    }
+    detectLast = { at: new Date().toISOString(), results };
+    const found = results.flatMap(r => r.found || []);
+    if (found.length) { for (const f of found) delete titleCache[f.blogId]; console.log(`[발행 감지] ${found.map(f => f.blogId + '/' + f.logNo).join(', ')}`); }
+    emitRaw('pending', { at: Date.now(), found: found.length });
+    return detectLast;
+  })().finally(() => { detecting = null; });
+  return detecting;
+}
+if (PUB_POLL_MS) {
+  const tick = () => {
+    detectNext = Date.now() + PUB_POLL_MS;
+    try { if (flow.scan(flowFiles(null)).some(x => x.state === 'pending')) detectPublished(null, null).catch(e => console.error('발행 감지:', e.message)); } catch (e) { console.error('발행 감지:', e.message); }
+  };
+  setTimeout(tick, 30000);
+  setInterval(tick, PUB_POLL_MS);
+}
+// 임시저장 글 열기: 그 계정 전용 크롬(로그인 유지 방식) 또는 새 시크릿 창(새 창 로그인 방식)에 글쓰기 화면을 연다.
+//   글쓰기 화면 상단 [저장] 옆 숫자 → 임시저장 목록에서 글을 골라 사람이 직접 [발행]한다. 크롬을 못 찾으면 기본 브라우저로.
+function openDraftWindow(blogId) {
+  const url = `https://blog.naver.com/${blogId}?Redirect=Write&`;
+  // 고정 IP가 할당된 계정: 프록시·출구 IP 확인을 거치는 open_write.js로만 연다. 실패해도 기본 브라우저로 대신 열지 않는다.
+  if ((accounts.find(x => x.blogId === blogId) || {}).ipId) return new Promise(resolve => {
+    execFile(process.execPath, [path.join(TOOL, 'open_write.js')], { cwd: TOOL, env: { ...process.env, BLOG_ID: blogId, BLOG_PROFILE: profileDirOf(blogId), ...netEnvOf(blogId), LOGIN_MODE: 'keep' }, timeout: 120000, encoding: 'utf8' }, (e, out) => {
+      const m = String(out || '').match(/@@결과 (.+)/); let r = null; try { r = m && JSON.parse(m[1]); } catch { }
+      if (r && r.ok) resolve({ ok: true, how: 'chrome', fresh: false, url, message: '고정 IP를 확인하고 이 계정 전용 크롬에 글쓰기 화면을 열었습니다. 상단 [저장] 옆 숫자를 눌러 임시저장 목록에서 이 글을 열고 직접 발행하세요.' });
+      else resolve({ ok: false, url, message: '고정 IP 확인에 실패해 창을 열지 않았습니다: ' + ((r && r.error) || (e && e.message) || '알 수 없는 오류') });
+    });
+  });
+  const fresh = settingsFor(blogId).loginMode !== 'keep';
+  try {
+    const chrome = require(path.join(TOOL, '..', 'chrome.js')).findChrome();
+    let dir = profileDirOf(blogId);
+    const args = ['--lang=ko-KR', '--no-first-run', '--no-default-browser-check'];
+    if (fresh) { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bokbok-fresh-')); args.push('--incognito'); }
+    else fs.mkdirSync(dir, { recursive: true });
+    spawn(chrome, [`--user-data-dir=${dir}`, ...args, url], { detached: true, stdio: 'ignore' }).unref();
+    return { ok: true, how: 'chrome', fresh, url, message: fresh
+      ? '새 시크릿 창(전용 임시 프로필)에 글쓰기 화면을 열었습니다. 창에서 직접 로그인한 뒤, 상단 [저장] 옆 숫자를 눌러 임시저장 목록에서 이 글을 열고 직접 발행하세요.'
+      : '이 계정 전용 크롬에 글쓰기 화면을 열었습니다. 상단 [저장] 옆 숫자를 눌러 임시저장 목록에서 이 글을 열고 직접 발행하세요.' };
+  } catch (e) {
+    openPath(url);
+    return { ok: true, how: 'browser', url, message: `전용 크롬을 열지 못해(${e.message}) 기본 브라우저로 글쓰기 화면을 열었습니다. 그 계정으로 로그인돼 있어야 임시저장 글이 보입니다.` };
+  }
 }
 
 // ── 이웃 후보: 발행 뒤 읽은 다른 사람 블로그를 공개 정보로 점수 매겨 쌓는다 ──
@@ -376,7 +506,7 @@ async function neighborScan(myId, items) {
 }
 function neighborOpen(it) {
   return new Promise(resolve => {
-    execFile(process.execPath, [path.join(TOOL, 'neighbor.js'), it.blogId], { cwd: TOOL, env: { ...process.env, BLOG_ID: it.myId, BLOG_PROFILE: profileDirOf(it.myId) }, timeout: 90000, encoding: 'utf8' }, (e, out, err) => {
+    execFile(process.execPath, [path.join(TOOL, 'neighbor.js'), it.blogId], { cwd: TOOL, env: { ...process.env, BLOG_ID: it.myId, BLOG_PROFILE: profileDirOf(it.myId), ...netEnvOf(it.myId) }, timeout: 90000, encoding: 'utf8' }, (e, out, err) => {
       const line = String(out || '').split(/\r?\n/).find(l => l.startsWith('@@결과 '));
       let r = null; try { r = line ? JSON.parse(line.slice(5)) : null; } catch { }
       resolve(r || { target: it.blogId, where: 'error', error: (e && e.message) || String(err || '').trim() || '열지 못함' });
@@ -420,7 +550,7 @@ const userCanSettings = u => roleOf(u) === 'admin' || (u && u.canSettings === tr
 const statusOf = u => (u && ['pending', 'disabled'].includes(u.status) ? u.status : 'active');
 const STATUS_MSG = { pending: '관리자 승인을 기다리는 계정입니다. 승인되면 로그인할 수 있습니다', disabled: '정지된 계정입니다. 관리자에게 문의하세요' };
 // 경로마다 필요한 플랫폼·수준. null = 로그인만 하면 됨
-const BLOG_RE = /^\/api\/(state|topics|neighbors|history|gen|insight|accounts|login|pick|unregister|run|stop|settings)(\/|$)/;
+const BLOG_RE = /^\/api\/(state|topics|neighbors|history|gen|insight|accounts|login|pick|unregister|run|stop|settings|flow)(\/|$)/;
 const CHAN_RE = /^\/api\/(channels|channel-settings|channel-posts|channel-history|engine)(\/|$)/;
 const SETTINGS_API = new Set(['/api/settings', '/api/insight/settings', '/api/gen/settings', '/api/net/settings', '/api/quit', '/api/open']);
 function needOf(P, method, u, b) {
@@ -535,6 +665,8 @@ for (const p of CHANNELS) {
 }
 const secrets = require(path.join(__dirname, 'engines', 'secrets.js'));
 const { redact } = require(path.join(__dirname, 'engines', 'common.js'));
+// 원고 흐름: G2 품질검사 → SAVE 임시저장 → 발행 대기 → 발행 감지 → LOGMETER (flow.js)
+const flow = require(path.join(__dirname, 'flow.js')).createFlow({ DATA, quality: require(path.join(__dirname, 'quality')), secrets });
 const TOKEN_KEYS = ['accessToken', 'refreshToken', 'tokenExpiresAt'];
 const isWarn = m => String(m).startsWith('주의:');
 const engineOf = p => { const e = ENGINES[chan(p)]; if (!e) throw new Error('이 채널은 발행 기능을 준비 중입니다'); return e; };
@@ -649,7 +781,7 @@ function accountHidden(a) {
 function fetchHidden(blogId, url) {
   return new Promise((resolve, reject) => {
     const out = refDir(blogId, 'hidden'); fs.mkdirSync(out, { recursive: true });
-    const env = { ...process.env, BLOG_ID: blogId, BLOG_PROFILE: profileDirOf(blogId), URL: url, OUT: out, LOGIN_MODE: 'keep' };
+    const env = { ...process.env, BLOG_ID: blogId, BLOG_PROFILE: profileDirOf(blogId), ...netEnvOf(blogId), URL: url, OUT: out, LOGIN_MODE: 'keep' };
     const proc = spawn(process.execPath, [path.join(TOOL, 'hidden.js')], { cwd: TOOL, env });
     const items = [], lines = []; let err = '', buf = '';
     const onLine = l => {
@@ -760,8 +892,9 @@ function detailOptions() {
   let w = null; try { w = genModule('writer'); } catch { }
   const list = (obj, fb) => obj ? Object.entries(obj).map(([key, v]) => ({ key, label: v.label, desc: v.desc })) : fb;
   return {
-    imageModes: [{ key: 'ai', label: 'AI 그림', desc: '대표 이미지를 AI가 그리고 나머지는 글자 카드' }, { key: 'photos', label: '내 사진', desc: '사진함에서 고른 사진을 넣고 나머지는 글자 카드' }, { key: 'cards', label: '글자 카드만', desc: 'AI 없이 전부 글자 카드 이미지'}, { key: 'clinical', label: '임상 사진 (치과 증례)', desc: '임상 사진을 고른 순서 그대로 글 흐름이 잡히는 증례 글. 카드 없음 · 의료광고 규칙 검사 · 부작용·주의사항 문단 필수' }],
+    imageModes: [{ key: 'ai', label: 'AI 그림', desc: '대표 이미지를 AI가 그리고 나머지는 글자 카드' }, { key: 'photos', label: '내 사진', desc: '사진함에서 고른 사진을 넣고 나머지는 글자 카드' }, { key: 'cards', label: '글자 카드만', desc: 'AI 없이 전부 글자 카드 이미지'}, { key: 'clinical', label: '임상 사진 (병원 증례)', desc: '임상 사진을 고른 순서 그대로 글 흐름이 잡히는 증례 글. 카드 없음 · 의료법 검수 · 부작용·주의사항 문단 필수' }],
     clinicalFields: (() => { try { return genModule('clinical').FIELDS; } catch { return []; } })(),
+    clinicalFieldsByDept: Object.fromEntries(DEPT.list().map(d => [d.key, d.key === 'dental' ? (() => { try { return genModule('clinical').FIELDS; } catch { return d.fields; } })() : d.fields])),
     clinicalStages: (() => { try { return genModule('clinical').STAGES; } catch { return []; } })(),
     clinicalForms: (() => { try { return Object.values(genModule('clinical').FORMS).map(f => ({ key: f.key, label: f.label, desc: f.desc })); } catch { return [{ key: 'stage', label: '증례 순서형', desc: '' }]; } })(),
     useHiddens: [{ key: 'on', label: '사용', desc: '블로그 계정에 저장한 히든 이미지(원장 소개·안내·지도)를 정해진 자리에 넣습니다' }, { key: 'off', label: '사용 안 함', desc: '이 원고에는 히든 이미지를 넣지 않습니다' }],
@@ -1203,6 +1336,7 @@ http.createServer(async (req, res) => {
       }
       if (P === '/api/net') return send(res, 200, tether ? await netStatus(u.searchParams.get('refresh') === '1') : await publicIp(u.searchParams.get('refresh') === '1'));
       if (P === '/api/net/job') return send(res, 200, { job: netJob });
+      if (P === '/api/medical/depts') return send(res, 200, { depts: DEPT.list() });
       if (P === '/api/queue') return send(res, 200, { items: Q.items.map(x => Q.pub(x)), summary: Q.summary(), state: Q.state });
       if (P === '/api/state') {
         const mine = visibleAccounts(me);
@@ -1214,9 +1348,11 @@ http.createServer(async (req, res) => {
           const last = hist.find(h => h.file === m.path && h.blogId === blogId);
           let reviewed = null, auto = false;
           if (m.draft) { const dj = readJson(path.join(path.dirname(m.path), 'draft.json')); if (dj) { reviewed = dj.reviewed || null; auto = !!(dj.input && dj.input.auto); } }
-          return { ...s, registered: m.registered, draft: m.draft, posted: !!(s.ok && titles.includes(s.title)), last, reviewed, auto };
+          const sr = readJson(path.join(path.dirname(m.path), 'save_result.json'));
+          const save = sr && (!sr.manuscript || path.resolve(sr.manuscript).toLowerCase() === path.resolve(m.path).toLowerCase()) ? { status: sr.status, statusText: flowMod.STATUS_KO[sr.status] || sr.status, savedAt: sr.savedAt || null } : null;
+          return { ...s, registered: m.registered, draft: m.draft, posted: !!(s.ok && titles.includes(s.title)), last, reviewed, auto, g2: flow.g2Status(m.path), save };
         });
-        return send(res, 200, { accounts: mine, settings: settings(), manuscripts: ms, job: job && { blogId: job.blogId, file: job.file, mode: job.mode, progress: job.progress, done: job.done, result: job.result, lines: job.lines.slice(-200) } });
+        return send(res, 200, { accounts: mine, settings: blogId ? settingsFor(blogId) : settings(), defaults: settings(), blogSettings: Object.fromEntries(mine.map(a => [a.blogId, settingsFor(a.blogId)])), fixedIps: myIps(me), ipMaxBlogs: IP_MAX_BLOGS, manuscripts: ms, job: job && { blogId: job.blogId, file: job.file, mode: job.mode, progress: job.progress, done: job.done, result: job.result, lines: job.lines.slice(-200) } });
       }
       if (P === '/api/topics') {
         // 주제 조회: 이 계정의 발행 데이터로 "지금 이 주제를 써도 되나" 판정 + 축별 상태 (외부·AI 호출 없음)
@@ -1234,6 +1370,21 @@ http.createServer(async (req, res) => {
         const mine = neighbors().filter(x => !my || x.myId === my);
         return send(res, 200, { items: all ? mine : mine.filter(x => x.status === 'candidate'), total: mine.length, scanning: nbScanning });
       }
+      // ── 원고 흐름 (flow.js) ──
+      if (P === '/api/flow/pending') {
+        const items = flow.scan(flowFiles(me));
+        return send(res, 200, { items, lastCheck: detectLast, pollMin: PUB_POLL_MS ? Math.round(PUB_POLL_MS / 60000) : 0, nextCheckAt: detectNext });
+      }
+      if (P === '/api/flow/lm/status') return send(res, 200, await flow.lmHealth());
+      if (P === '/api/flow/lm/recs') {
+        const blogId = String(u.searchParams.get('blogId') || ''); if (!ID_RE.test(blogId)) throw new Error('블로그 아이디 형식이 아님');
+        return send(res, 200, await flow.recommendations(blogId, { limit: intIn(u.searchParams.get('limit'), 1, 10, 10), refresh: u.searchParams.get('refresh') === '1' }));
+      }
+      if (P === '/api/flow/formplan') {
+        const blogId = String(u.searchParams.get('blogId') || ''); if (!ID_RE.test(blogId)) throw new Error('블로그 아이디 형식이 아님');
+        return send(res, 200, await formPlanFor(blogId, intIn(u.searchParams.get('n'), 2, 10, 5)));
+      }
+      if (P === '/api/flow/override-log') return send(res, 200, { items: read('override_log', []).slice(0, 100) });
       if (P === '/api/history') {
         const blogId = u.searchParams.get('blogId');
         const h = read('history', []);   // 이미 최신순으로 쌓임
@@ -1663,6 +1814,8 @@ http.createServer(async (req, res) => {
       const pl = pipeline();
       // 글 끝 링크: 관련 내 글(내부 링크) + 홈페이지. 주소는 서버가 실제 글 목록에서 고른다
       try { input.links = await buildLinks(blogId, keyword, input.topic); } catch (e) { input.links = null; }
+      // 최근 글과 다른 형태로: 다음 글 설계(brief)를 원고 프롬프트에 넣는다
+      try { const fp = await formPlanFor(blogId, 5); if (fp.count) input.formBrief = fp.brief; } catch (e) { console.error('다음 글 설계:', e.message); }
       const j = genJob = { kind: 'generate', blogId, keyword, started: Date.now(), steps: [], lines: [], done: false, cancel: false, result: null, error: null, plan: chosen || null };
       if (!internal) { const acc = accounts.find(a => a.blogId === blogId) || {}; Q.track({ lane: 'generate', kind: 'generate', blogId, label: `${acc.name || blogId} · 원고 만들기 · ${keyword}`, payload: { blogId, keyword } }); }
       const cb = genCallbacks(j);
@@ -1802,7 +1955,10 @@ http.createServer(async (req, res) => {
       });
       // 네이버 로그인 아이디가 블로그 아이디와 다를 때(블로그 아이디를 따로 만든 계정): 전용 크롬 프로필은 로그인 아이디 폴더를 쓴다
       if (b.loginId !== undefined) { const lid = String(b.loginId || '').trim(); if (lid && !/^[a-zA-Z0-9_-]{2,40}$/.test(lid)) throw new Error('네이버 로그인 아이디 형식이 아닙니다'); a.loginId = lid; }
+      if (b.dept !== undefined && a.kind !== 'general') { if (!DEPT.byKey(b.dept)) throw new Error('진료과를 골라 주세요'); a.dept = b.dept; a.kind = 'hospital'; }
+      if (b.region !== undefined && a.kind !== 'general') a.region = cleanRegion(b.region);
       write('accounts', accounts);
+      syncHospital(a, me);
       return send(res, 200, { account: a });
     }
     // ── 히든 이미지: 내 블로그 비공개 글의 이미지(+아래 규칙 문구) → 계정 슬롯 ──
@@ -1945,12 +2101,55 @@ http.createServer(async (req, res) => {
     // ── 블로그 (v1 그대로) ──
     if (P === '/api/accounts') {
       if (!/^[a-zA-Z0-9_-]{3,40}$/.test(b.blogId || '')) throw new Error('블로그 아이디 형식이 아님');
+      const general = b.general === true && (me.internal || isAdmin(me));
+      if (!general && !DEPT.byKey(b.dept)) throw new Error('진료과를 골라 주세요. 병의원 블로그만 등록할 수 있습니다(일반 블로그는 관리자 CMD)');
+      const region = cleanRegion(b.region);
+      if (!general && !region.sigungu && !region.area) throw new Error('지역(시·군·구 또는 동·역)을 입력해 주세요');
       let a = accounts.find(x => x.blogId === b.blogId);
       if (!a) { a = { name: b.name || b.blogId, blogId: b.blogId, owner: me.internal ? '' : me.user.email }; accounts.push(a); }
+      if (general) Object.assign(a, { kind: 'general' }); else Object.assign(a, { kind: 'hospital', dept: b.dept, region });
       write('accounts', accounts);
+      syncHospital(a, me);
       // 새 계정은 기본 글 형태 템플릿 3개를 바로 갖는다(데이터가 쌓이면 [기본 3개 다시 구성]으로 갱신)
       if (!Array.isArray(a.presets) || !a.presets.length) { try { applyDefaultPresets(a, suggestPresets(a.blogId)); } catch (e) { console.error('기본 템플릿 구성 실패', a.blogId, e.message); } }
       return send(res, 200, { ok: true, presets: a.presets || [] });
+    }
+    if (P === '/api/accounts/ips') {   // 고정 IP 목록 저장 (전체 교체)
+      if (!Array.isArray(b.items) || b.items.length > 200) throw new Error('고정 IP 목록 형식이 아닙니다');
+      const net = require('net'), seen = new Set();
+      const list = b.items.map(it => {
+        const ip = String(it.ip || '').trim();
+        if (net.isIP(ip) !== 4) throw new Error(`출구 IP는 IPv4 형식이어야 합니다: ${ip || '(빈칸)'}`);
+        const proxy = normProxy(it.proxy);
+        if (!proxy) throw new Error(`${ip}: 프록시 주소:포트를 입력하세요`);
+        const id = /^ip_[a-z0-9]{4,20}$/.test(it.id || '') ? it.id : 'ip_' + crypto.randomBytes(4).toString('hex');
+        if (seen.has(id)) throw new Error('중복된 항목'); seen.add(id);
+        return { id, label: String(it.label || '').trim().slice(0, 30), proxy, ip, owner: ipOwner(me) };
+      });
+      const others = fixedIps.filter(x => x.owner !== ipOwner(me));
+      if (list.some(x => others.some(o => o.id === x.id))) throw new Error('다른 사용자의 고정 IP입니다');
+      fixedIps = [...others, ...list]; write('fixed_ips', fixedIps);
+      return send(res, 200, { fixedIps: myIps(me) });
+    }
+    if (P === '/api/accounts/ip') {   // 블로그 계정에 고정 IP 할당 (빈 값 = 할당 해제, 이 PC 인터넷 그대로)
+      const a = accounts.find(x => x.blogId === String(b.blogId || ''));
+      if (!a) throw new Error('등록된 블로그 계정이 아닙니다');
+      const ipId = String(b.ipId || '');
+      if (ipId) {
+        const ip = myIps(me).find(x => x.id === ipId);
+        if (!ip) throw new Error('내 고정 IP 목록에 없는 IP입니다');
+        const others = ip.used.filter(id => id !== a.blogId);
+        if (others.length >= IP_MAX_BLOGS) throw new Error(`이 고정 IP는 이미 블로그 ${IP_MAX_BLOGS}개(${others.join(', ')})에 할당돼 있습니다. 고정 IP 하나는 블로그 ${IP_MAX_BLOGS}개까지만 쓸 수 있습니다`);
+      }
+      a.ipId = ipId; write('accounts', accounts);
+      return send(res, 200, { account: a, settings: settingsFor(a.blogId), fixedIps: myIps(me) });
+    }
+    if (P === '/api/accounts/settings') {   // 블로그별 입력 설정 저장 (reset: true = 전부 기본값으로)
+      const a = accounts.find(x => x.blogId === String(b.blogId || ''));
+      if (!a) throw new Error('등록된 블로그 계정이 아닙니다');
+      a.settings = b.reset ? {} : cleanBlogSettings(b.settings || {});
+      write('accounts', accounts);
+      return send(res, 200, { account: a, settings: settingsFor(a.blogId) });
     }
     if (P === '/api/accounts/delete') { accounts = accounts.filter(a => a.blogId !== b.blogId); write('accounts', accounts); return send(res, 200, { ok: true }); }
     if (P === '/api/login') {
@@ -1958,7 +2157,7 @@ http.createServer(async (req, res) => {
         if (!accounts.some(a => a.blogId === b.blogId)) throw new Error('등록된 블로그를 선택하세요');
         const loginId = String(b.loginId || '').trim();
         if (!/^[a-zA-Z0-9_-]{2,40}$/.test(loginId) || typeof b.password !== 'string' || !b.password || b.password.length > 200) throw new Error('네이버 아이디와 비밀번호를 확인하세요');
-        const child = spawn(process.execPath, [path.join(TOOL, 'login.js'), '--fill-once'], { cwd: TOOL, env: { ...process.env, BLOG_ID: b.blogId, BLOG_PROFILE: profileDirOf(b.blogId), LOGIN_MODE: 'fresh' }, detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+        const child = spawn(process.execPath, [path.join(TOOL, 'login.js'), '--fill-once'], { cwd: TOOL, env: { ...process.env, BLOG_ID: b.blogId, BLOG_PROFILE: profileDirOf(b.blogId), ...netEnvOf(b.blogId), LOGIN_MODE: 'fresh' }, detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
         const ready = new Promise((resolve, reject) => {
           const timer = setTimeout(() => { if (child.connected) child.disconnect(); reject(new Error('로그인 창 준비 시간이 초과되었습니다')); }, 60000);
           const fail = () => { clearTimeout(timer); reject(new Error('로그인 창 준비에 실패했습니다')); };
@@ -1972,7 +2171,7 @@ http.createServer(async (req, res) => {
         await ready;
         return send(res, 200, { ok: true, filled: true });
       }
-      spawn(process.execPath, [path.join(TOOL, 'login.js')], { cwd: TOOL, env: { ...process.env, BLOG_ID: b.blogId, BLOG_PROFILE: profileDirOf(b.blogId) }, detached: true, stdio: 'ignore' }).unref();
+      spawn(process.execPath, [path.join(TOOL, 'login.js')], { cwd: TOOL, env: { ...process.env, BLOG_ID: b.blogId, BLOG_PROFILE: profileDirOf(b.blogId), ...netEnvOf(b.blogId) }, detached: true, stdio: 'ignore' }).unref();
       return send(res, 200, { ok: true });
     }
     if (P === '/api/pick') {
@@ -1992,12 +2191,56 @@ http.createServer(async (req, res) => {
         readN: Math.round(n(b.readN, 0, 5, cur.readN)), readSec: Math.round(n(b.readSec, 20, 180, cur.readSec)),
         clearCache: b.clearCache === undefined ? cur.clearCache !== false : !!b.clearCache,
         loginMode: ['fresh', 'keep'].includes(b.loginMode) ? b.loginMode : (cur.loginMode === 'keep' ? 'keep' : 'fresh'),
-        mode: ['test', 'stop', 'publish'].includes(b.mode) ? b.mode : cur.mode,
+        mode: ['test', 'stop', 'save'].includes(b.mode) ? b.mode : cur.mode,
         scanDirs: Array.isArray(b.scanDirs) ? b.scanDirs.filter(Boolean) : cur.scanDirs,
       };
       write('settings', next); return send(res, 200, next);
     }
-    if (P === '/api/run') { run(b.blogId, b.file, b.mode || settings().mode, { direct: !internal }); return send(res, 200, { ok: true }); }
+    if (P === '/api/flow/g2') {
+      const blogId = String(b.blogId || ''), file = String(b.file || '');
+      if (!accounts.some(a => a.blogId === blogId)) throw new Error('등록된 블로그를 선택하세요');
+      return send(res, 200, { g2: flow.runG2(file, blogId) });
+    }
+    if (P === '/api/flow/pending/state') {
+      const it = flow.scan(flowFiles(me)).find(x => x.id === String(b.id || ''));
+      if (!it) throw new HttpErr(404, '그 저장 기록을 찾을 수 없습니다');
+      flow.setState(it.id, String(b.state || ''), me.user && me.user.name);
+      emitRaw('pending', { at: Date.now() });
+      return send(res, 200, { ok: true });
+    }
+    if (P === '/api/flow/pending/open') {
+      const it = flow.scan(flowFiles(me)).find(x => x.id === String(b.id || ''));
+      if (!it || !it.blogId) throw new HttpErr(404, '그 저장 기록을 찾을 수 없습니다');
+      return send(res, 200, await openDraftWindow(it.blogId));
+    }
+    if (P === '/api/flow/detect') {
+      const r = await detectPublished(b.blogId ? String(b.blogId) : null, me);
+      return send(res, 200, r);
+    }
+    if (P === '/api/flow/lm/reserve') {
+      const blogId = String(b.blogId || ''); if (!ID_RE.test(blogId)) throw new Error('블로그 아이디 형식이 아님');
+      return send(res, 200, await flow.reserve({ blogId, keyword: cleanText(b.keyword, 40, '키워드', false), intentClusterId: b.intentClusterId ? String(b.intentClusterId).slice(0, 80) : undefined, candidateId: b.candidateId ? String(b.candidateId).slice(0, 80) : undefined }));
+    }
+    if (P === '/api/flow/lm/fingerprints') {
+      const blogId = String(b.blogId || ''); if (!ID_RE.test(blogId)) throw new Error('블로그 아이디 형식이 아님');
+      return send(res, 200, await flow.syncFingerprints(blogId));
+    }
+    if (P === '/api/flow/lm/retry') {
+      const items = flow.scan(flowFiles(me)).filter(x => x.state === 'published');
+      return send(res, 200, { results: await flow.retryUnsent(items) });
+    }
+    if (P === '/api/run') {
+      // 실행 = G2 품질검사 → PASS 일 때만 write.js (기본 SAVE=1). 판정이 PASS 가 아니면 409 + 결과. override:{reason} = 운영자 예외(SKIP_G2=1)
+      if (job && !job.done) throw new HttpErr(409, '이미 실행 중입니다');
+      const blogId = String(b.blogId || ''), file = String(b.file || '');
+      if (!accounts.some(a => a.blogId === blogId)) throw new Error('등록된 블로그를 선택하세요');
+      if (!file || !fs.existsSync(file)) throw new Error('원고 파일을 찾을 수 없습니다');
+      const plan = flow.planRun({ file, blogId, mode: b.mode || settingsFor(blogId).mode, override: b.override && typeof b.override === 'object' ? b.override : null, by: me.user && me.user.name });
+      if (!plan.ok) return send(res, plan.status, { error: plan.error, g2: plan.g2 });
+      if (plan.override) console.log(`[override] ${blogId} ${file} · ${plan.override.verdict} · ${plan.override.reason}`);
+      run(blogId, file, plan.mode, { direct: !internal, skipG2: plan.skipG2, override: plan.override });
+      return send(res, 200, { ok: true, mode: plan.mode, g2: plan.g2, override: plan.override });
+    }
     if (P === '/api/stop') { if (job && !job.done) job.proc.kill(); return send(res, 200, { ok: true }); }
     if (P === '/api/neighbors/scan') {
       // 발행 기록의 읽은 글 목록으로 이웃 후보 점수를 다시 매긴다 (앱 밖에서 발행한 기록을 넣었을 때 등)
@@ -2028,7 +2271,7 @@ http.createServer(async (req, res) => {
         const blogId = String(b.blogId || ''); if (!ID_RE.test(blogId)) throw new Error('블로그 아이디 형식이 아님');
         const a = accounts.find(x => x.blogId === blogId); if (!a) throw new HttpErr(404, '등록된 블로그 계정이 아닙니다');
         const file = String(b.file || ''); if (!file || !fs.existsSync(file)) throw new Error('원고 파일을 찾을 수 없습니다');
-        const mode = ['test', 'check', 'publish'].includes(b.mode) ? b.mode : settings().mode;
+        const mode = flow.normMode(['test', 'stop', 'save', 'manual'].includes(b.mode) ? b.mode : settingsFor(blogId).mode);
         const dup = Q.items.find(x => x.status === 'queued' && x.kind === 'publish' && x.payload.file === file && x.payload.blogId === blogId);
         if (dup) throw new Error('같은 원고가 이미 대기 중입니다');
         it = Q.add({ lane: 'publish', kind: 'publish', blogId, label: `${a.name || blogId} · ${path.basename(file).replace(/\.(txt|js)$/i, '')}`, payload: { blogId, file, mode } });
@@ -2106,7 +2349,41 @@ http.createServer(async (req, res) => {
       return send(res, 200, { started: true });
     }
     if (P === '/api/open') { openPath(b.path); return send(res, 200, { ok: true }); }
-    if (P === '/api/quit') { send(res, 200, { ok: true }); setTimeout(() => process.exit(0), 300); return; }
+    // ── 병원 블로그 지수(index_web 편입): 입장권·관리자 명령·병원 목록 ──
+    if (P === '/api/idx/enter') {
+      const host = String(req.headers.host || '').split(':')[0];
+      return send(res, 200, await IDX.enter({ user: me.user.name || me.user.email, role: isAdmin(me) ? 'admin' : 'user', to: b.to || '/', theme: b.theme, host, dataDir: DATA }));
+    }
+    if (P === '/api/idx/hospitals') {
+      const r = await IDX.hospitals({ dataDir: DATA, user: me.user.name || me.user.email, role: isAdmin(me) ? 'admin' : 'user', save: b.save, remove: b.remove });
+      return send(res, 200, Object.assign(r, { accounts: visibleAccounts(me).map(a => ({ blogId: a.blogId, name: a.name || a.blogId })), admin: isAdmin(me) }));
+    }
+    if (P === '/api/idx/cmd') {
+      if (!isAdmin(me)) return send(res, 403, { error: '관리자만 쓸 수 있습니다' });
+      const line = String(b.line || '').slice(0, 300).trim(), w = line.split(/\s+/);
+      if (w[0] === 'account') {
+        const out = t => send(res, 200, { ok: true, out: Array.isArray(t) ? t.join('\n') : String(t) });
+        if (w[1] === 'list') return out(accounts.map(a => `${a.blogId.padEnd(18)} ${a.kind === 'general' ? '일반' : '병원 · ' + ((DEPT.byKey(a.dept) || {}).label || '?')}  ${a.region ? [a.region.sigungu, a.region.area].filter(Boolean).join(' ') : ''}  ${a.name || ''}`));
+        const a = accounts.find(x => x.blogId === w[2]);
+        if (w[1] === 'general') {
+          if (!/^[a-zA-Z0-9_-]{3,40}$/.test(w[2] || '')) return out('사용: account general <블로그아이디> [이름]');
+          const x = a || (accounts.push({ name: w.slice(3).join(' ') || w[2], blogId: w[2], owner: me.user.email }), accounts[accounts.length - 1]);
+          x.kind = 'general'; write('accounts', accounts);
+          return out(`일반 블로그로 표시: ${x.blogId} (관리자 화면에만 보이고, 원고·발행은 관리자 명령으로)`);
+        }
+        if (w[1] === 'hospital') {
+          if (!a) return out('먼저 계정을 등록하세요. 사용: account hospital <아이디> <진료과키> <시군구> [동·역]');
+          if (!DEPT.byKey(w[3])) return out('진료과 키: ' + DEPT.list().map(d => d.key).join(', '));
+          Object.assign(a, { kind: 'hospital', dept: w[3], region: cleanRegion({ sigungu: w[4], area: w[5] }) }); write('accounts', accounts); syncHospital(a, me);
+          return out(`병원 블로그로 표시: ${a.blogId} · ${DEPT.byKey(a.dept).label}`);
+        }
+        return out(['account list                                  앱 블로그 계정 목록(병원/일반)', 'account general <아이디> [이름]               일반 블로그로 표시(관리자 전용)', 'account hospital <아이디> <진료과> <시군구> [동·역]   병원 블로그로 표시']);
+      }
+      const r = await IDX.cmd({ line, user: me.user.name || me.user.email, role: 'admin', dataDir: DATA });
+      if (w[0] === 'help' && r && r.out) r.out += '\naccount list|general|hospital …              앱 블로그 계정(병원/일반) 관리';
+      return send(res, 200, r);
+    }
+    if (P === '/api/quit') { send(res, 200, { ok: true }); setTimeout(() => { IDX.stop(); process.exit(0); }, 300); return; }
     send(res, 404, { error: '없는 경로입니다' });
   } catch (e) { if (!res.headersSent) send(res, e.code >= 400 && e.code < 500 ? e.code : 400, { error: e.message }); }
 }).listen(PORT, '127.0.0.1', () => console.log(`bokbok ${VERSION} → http://127.0.0.1:${PORT}`));
